@@ -1,0 +1,12 @@
+[package]
+name = "branchkit-stage-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "BranchKit pipeline stage SDK: wire framing, event vocabulary, and stage logging for out-of-tree pipeline stages"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+getrandom = "0.2"
