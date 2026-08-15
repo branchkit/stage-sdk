@@ -43,6 +43,7 @@ pub mod event_type {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioFormat {
     pub rate: u32,
     pub width: u32,
@@ -60,6 +61,7 @@ impl AudioFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Capability {
     pub stage_type: String,
     pub stage_name: String,
@@ -71,18 +73,21 @@ pub struct Capability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioStart {
     pub session_id: String,
     pub format: AudioFormat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioChunk {
     pub session_id: String,
     pub timestamp_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioStop {
     pub session_id: String,
     /// Shared-clock position (the AudioChunk `timestamp_ms` timebase) after
@@ -96,6 +101,7 @@ pub struct AudioStop {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Transcript {
     pub session_id: String,
     pub text: String,
@@ -131,12 +137,14 @@ pub struct Transcript {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FlowCredit {
     pub session_id: String,
     pub frames: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ErrorEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -145,9 +153,41 @@ pub struct ErrorEvent {
     pub fatal: bool,
 }
 
+/// The `vocabulary_update` payload: the recognition word union plus the
+/// optional grammar stamps the platform attaches at delivery time.
+///
+/// This struct is the typed contract; the actuator's producer side still
+/// assembles the payload field-by-field (the three delivery-time grammar
+/// stamps mutate the JSON per event), and an actuator-side test pins that
+/// assembly to this shape so the two cannot drift silently. A consumer
+/// stage should treat every field but `words` as optional and fall back
+/// to the flat word list when a stamp is absent or malformed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VocabularyUpdate {
+    /// The full recognition word union (uppercased downstream to the model
+    /// lexicon's casing by the consumer).
+    pub words: Vec<String>,
+    /// Exclusive-mode narrowing: when present, the engine grammar is built
+    /// from THIS list instead of `words`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrow_to: Option<Vec<String>>,
+    /// Sparse per-word decoding bias (Lever E): only biased words appear;
+    /// everything else is neutral. Keyed by word identity so it cannot drift
+    /// out of alignment with the separately-built union.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub word_weights: Option<std::collections::HashMap<String, f32>>,
+    /// The structured word-level grammar DAG (D2), stamped when the
+    /// structured-grammar toggle is on. Absent/null → the consumer falls back
+    /// to the flat word-list grammar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grammar_dag: Option<crate::grammar_dag::GrammarDagWire>,
+}
+
 // ---- Device monitoring events ----
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeviceInfo {
     pub device_id: u32,
     pub uid: String,
@@ -159,16 +199,19 @@ pub struct DeviceInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeviceSnapshot {
     pub devices: Vec<DeviceInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeviceAdded {
     pub device: DeviceInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeviceRemoved {
     pub device_id: u32,
     pub uid: String,
@@ -176,6 +219,7 @@ pub struct DeviceRemoved {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DefaultDeviceChanged {
     pub direction: String,
     pub device_id: u32,
@@ -186,6 +230,7 @@ pub struct DefaultDeviceChanged {
 // ---- Location events ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LocationUpdate {
     pub latitude: f64,
     pub longitude: f64,
@@ -196,12 +241,14 @@ pub struct LocationUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LocationError {
     pub code: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HeadingUpdate {
     pub magnetic_heading: f64,
     pub true_heading: f64,
@@ -212,6 +259,7 @@ pub struct HeadingUpdate {
 // ---- Display monitoring events ----
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplayInfo {
     pub display_id: u32,
     pub width: u32,
@@ -223,21 +271,25 @@ pub struct DisplayInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplaySnapshot {
     pub displays: Vec<DisplayInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplayAdded {
     pub display: DisplayInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplayRemoved {
     pub display_id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplayChanged {
     pub display: DisplayInfo,
 }
@@ -245,6 +297,7 @@ pub struct DisplayChanged {
 // ---- Power monitoring events ----
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PowerState {
     pub source: String,
     pub battery_level: Option<f64>,
@@ -254,16 +307,19 @@ pub struct PowerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PowerSnapshot {
     pub state: PowerState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PowerSourceChanged {
     pub state: PowerState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SystemSleepWake {
     pub timestamp: f64,
 }

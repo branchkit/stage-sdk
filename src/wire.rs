@@ -58,8 +58,12 @@ impl Event {
     }
 }
 
+/// The serialized header line — one JSON object per event, newline-terminated,
+/// followed by exactly `payload_length` raw bytes when non-zero. `data` is
+/// omitted when empty/null; `payload_length` is omitted when zero.
 #[derive(Debug, Serialize, Deserialize)]
-struct WireHeader {
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub(crate) struct WireHeader {
     #[serde(rename = "type")]
     event_type: String,
     #[serde(default, skip_serializing_if = "is_empty_value")]

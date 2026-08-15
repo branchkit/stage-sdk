@@ -5,8 +5,19 @@ edition = "2021"
 license = "MIT"
 description = "BranchKit pipeline stage SDK: wire framing, event vocabulary, and stage logging for out-of-tree pipeline stages"
 
+[features]
+# Schema emission only — stage consumers never need this. The emit binary
+# regenerates contracts/pipeline.json (gated by `just check-stage-gen`).
+schema = ["dep:schemars"]
+
+[[bin]]
+name = "emit-pipeline-schema"
+path = "src/bin/emit_pipeline_schema.rs"
+required-features = ["schema"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 getrandom = "0.2"
+schemars = { version = "1", optional = true }

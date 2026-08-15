@@ -18,5 +18,7 @@
 
 pub mod events;
 pub mod grammar_dag;
+#[cfg(feature = "schema")]
+pub mod schema;
 pub mod stage_log;
 pub mod wire;

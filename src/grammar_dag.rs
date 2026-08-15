@@ -36,6 +36,7 @@ pub const START: StateId = 0;
 ///
 /// D3 extends this with per-arc command ids; D2 carries words only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GrammarDagWire {
     pub num_states: usize,
     pub start: StateId,
@@ -106,6 +107,7 @@ impl GrammarDagWire {
 /// omitted (`None`) means loop over the full recognition union — the phase-2
 /// default and the always-safe fallback.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OpenState {
     pub state: StateId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +117,7 @@ pub struct OpenState {
 /// One word-level arc in [`GrammarDagWire`]. `weight` is omitted when absent
 /// (D1 leaves it unset; a later weight policy populates it).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WireArc {
     pub from: StateId,
     pub word: String,
