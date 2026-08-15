@@ -25,3 +25,13 @@ pub mod grammar_dag;
 pub mod schema;
 pub mod stage_log;
 pub mod wire;
+
+/// Environment variable carrying the platform's model-root directory, set by
+/// the platform when it spawns a stage subprocess. A stage that loads models
+/// resolves relative model names against this root (`<root>/<name>`) and must
+/// NEVER re-derive the path itself: the sandbox profile grants read access to
+/// the model dir by the path the PLATFORM computes, so a second spelling does
+/// not merely disagree — it points the stage at a directory the profile
+/// denies. Absent (e.g. a stage run by hand) → no platform model root; stages
+/// fall back to explicit paths or their own overrides.
+pub const MODELS_DIR_ENV: &str = "BRANCHKIT_MODELS_DIR";
