@@ -1,17 +1,18 @@
 //! Typed event constructors and constants for the pipeline wire vocabulary.
 //!
-//! Mirrors `contracts/pipeline.json` exactly: snake-case event-type tags,
-//! snake-case field names, `final` (Rust keyword) is serialized as `final`
-//! via serde rename. Every per-session event carries a `session_id`
-//! (section 1's wire-types update).
+//! These types ARE the contract: `contracts/pipeline.json` is generated from
+//! them (`just gen-stage-proto`, drift-gated by `just check-stage-gen`) —
+//! never the other way around. Conventions: snake-case event-type tags,
+//! snake-case field names, `final` (Rust keyword) serialized via serde
+//! rename. Every per-session event carries a `session_id`.
 //!
 //! These structs serialize *into* the `Event::data` slot, not the wire
-//! envelope itself — the framing is in [`super::wire`].
+//! envelope itself — the framing is in [`crate::wire`].
 
 use serde::{Deserialize, Serialize};
 
-/// Event-type tags. Matches the closed vocabulary in
-/// `contracts/pipeline.json`.
+/// Event-type tags — the closed wire vocabulary (projected into the
+/// generated `contracts/pipeline.json` event catalog).
 pub mod event_type {
     pub const CAPABILITY: &str = "capability";
     pub const AUDIO_START: &str = "audio_start";
