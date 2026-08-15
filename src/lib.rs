@@ -11,9 +11,12 @@
 //!   power families).
 //! - [`stage_log`] — the `BKLOG1` stderr line protocol the platform parses
 //!   into per-stage, per-session log records.
+//! - [`grammar_dag`] — the wire projection of the command-grammar DAG a
+//!   recognition stage decodes (the builder stays in the actuator).
 //!
 //! Boundary and roadmap: `notes/DESIGN_STAGE_SDK.md` in the app repo.
 
 pub mod events;
+pub mod grammar_dag;
 pub mod stage_log;
 pub mod wire;
