@@ -209,6 +209,11 @@ pub fn pipeline_schema_json() -> String {
             "backpressure": "Window-based flow credit: the receiver advertises an initial credit, then grants more after processing batches; the sender decrements per audio_chunk and blocks at zero. Credit sizes are receiver-chosen policy, not part of this contract."
         },
         "eventTypes": Value::Object(event_types),
+        "customEvents": {
+            "namespace": format!("{}<vendor>.<name>", crate::events::EXT_EVENT_PREFIX),
+            "description": "Custom-event valve for domains the typed vocabulary doesn't cover: a stage may emit event types under `ext.` with at least three non-empty dot segments (`ext.<vendor>.<name>`); the platform routes them opaquely onto its event bus with the originating stage as the source, and plugins subscribe via `consumes.events` patterns (e.g. `ext.<vendor>.*`). `data` crosses the bus; a binary payload does not (the platform forwards `payload_length` in its place — payloads stay wire-level). The namespace is reserved to stages: plugin emits of `ext.*` are rejected. Declare emitted types or an `ext.<vendor>.*` glob in Capability.emits.",
+            "direction": "stage → host"
+        },
         "components": { "schemas": Value::Object(definitions) }
     });
     let mut out = serde_json::to_string_pretty(&doc).expect("schema document serializes");

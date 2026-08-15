@@ -43,6 +43,39 @@ pub mod event_type {
     pub const SYSTEM_DID_WAKE: &str = "system_did_wake";
 }
 
+/// Prefix of the custom-event namespace: `ext.<vendor>.<name>`.
+///
+/// The typed vocabulary above is closed — but a stage in a domain the
+/// platform hasn't typed yet (gaze, HID, EMG, OCR, …) may emit events under
+/// this namespace and the platform routes them opaquely onto its event bus,
+/// stamped with the originating stage as the source, where plugins subscribe
+/// to them like any other event (`consumes.events` pattern `ext.<vendor>.*`).
+/// Rules:
+/// - at least three non-empty dot segments (`ext.` alone or `ext.foo` is
+///   invalid) — the vendor segment is what keeps two stages' vocabularies
+///   from colliding; use a name you control
+/// - `data` crosses the bus; a binary `payload` does NOT (the bus is JSON) —
+///   the platform forwards `payload_length` in its place so the drop is
+///   visible, and payloads remain valid wire-level for stage-to-stage use
+/// - the namespace is reserved to stages: plugin emits of `ext.*` are
+///   rejected, so a subscriber can trust the source attribution
+/// - declare emitted types (or an `ext.<vendor>.*` glob) in
+///   [`Capability::emits`]; the conformance harness enforces the declaration
+///   and the platform logs undeclared emissions
+pub const EXT_EVENT_PREFIX: &str = "ext.";
+
+/// True when `event_type` is a well-formed custom event:
+/// `ext.<vendor>.<name>` with non-empty segments (more segments allowed).
+pub fn is_valid_ext_event_type(event_type: &str) -> bool {
+    let Some(rest) = event_type.strip_prefix(EXT_EVENT_PREFIX) else {
+        return false;
+    };
+    let mut segments = rest.split('.');
+    let has_two = segments.next().is_some_and(|s| !s.is_empty())
+        && segments.next().is_some_and(|s| !s.is_empty());
+    has_two && rest.split('.').all(|s| !s.is_empty())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioFormat {
@@ -71,6 +104,14 @@ pub struct Capability {
     pub lifecycle_modes: Vec<String>,
     #[serde(default)]
     pub feature_flags: serde_json::Map<String, serde_json::Value>,
+    /// Event types this stage emits — built-in tags (`transcript`,
+    /// `power_snapshot`, …) and/or custom types under [`EXT_EVENT_PREFIX`]
+    /// (an `ext.<vendor>.*` glob covers a vendor namespace). Advisory at
+    /// runtime (the platform logs undeclared `ext.*` emissions rather than
+    /// dropping them); enforced by the conformance harness. Empty = the
+    /// stage declares nothing (pre-existing stages).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,6 +441,45 @@ mod tests {
         };
         let v = serde_json::to_value(&e).unwrap();
         assert!(v.get("session_id").is_none());
+    }
+
+    #[test]
+    fn ext_event_type_requires_vendor_and_name_segments() {
+        assert!(is_valid_ext_event_type("ext.acme.gaze_point"));
+        assert!(is_valid_ext_event_type("ext.acme.gaze.left_eye"));
+        assert!(!is_valid_ext_event_type("ext."));
+        assert!(!is_valid_ext_event_type("ext.acme"));
+        assert!(!is_valid_ext_event_type("ext.acme."));
+        assert!(!is_valid_ext_event_type("ext..gaze"));
+        assert!(!is_valid_ext_event_type("extacme.gaze"));
+        assert!(!is_valid_ext_event_type("transcript"));
+    }
+
+    #[test]
+    fn capability_omits_empty_emits_and_roundtrips_declared() {
+        let cap = Capability {
+            stage_type: "source".into(),
+            stage_name: "t".into(),
+            audio_formats: vec![],
+            lifecycle_modes: vec!["persistent".into()],
+            feature_flags: serde_json::Map::new(),
+            emits: vec![],
+        };
+        let v = serde_json::to_value(&cap).unwrap();
+        assert!(v.get("emits").is_none(), "empty emits must be omitted");
+        // Old capability payloads (no emits key) still decode.
+        let old: Capability = serde_json::from_value(v).unwrap();
+        assert!(old.emits.is_empty());
+
+        let declared = Capability {
+            emits: vec!["power_snapshot".into(), "ext.acme.*".into()],
+            ..cap
+        };
+        let v = serde_json::to_value(&declared).unwrap();
+        assert_eq!(
+            v["emits"],
+            serde_json::json!(["power_snapshot", "ext.acme.*"])
+        );
     }
 
     #[test]
