@@ -13,9 +13,12 @@
 //!   into per-stage, per-session log records.
 //! - [`grammar_dag`] — the wire projection of the command-grammar DAG a
 //!   recognition stage decodes (the builder stays in the actuator).
+//! - [`credit`] — receiver-side flow-credit granting (the counter + emission
+//!   mechanism; window sizes stay per-stage policy).
 //!
 //! Boundary and roadmap: `notes/DESIGN_STAGE_SDK.md` in the app repo.
 
+pub mod credit;
 pub mod events;
 pub mod grammar_dag;
 #[cfg(feature = "schema")]
