@@ -35,3 +35,21 @@ pub mod wire;
 /// denies. Absent (e.g. a stage run by hand) → no platform model root; stages
 /// fall back to explicit paths or their own overrides.
 pub const MODELS_DIR_ENV: &str = "BRANCHKIT_MODELS_DIR";
+
+/// Environment variable carrying the data directory a stage may write to, set
+/// by the platform when it spawns a stage subprocess. This is the **owning
+/// plugin's** namespace, shared with the plugin process itself — a stage
+/// writes here and its plugin reads it back with ordinary file calls, which is
+/// the whole point: the two are one plugin's worth of data, and the platform
+/// should not have to carry it between them.
+///
+/// A built-in stage, which no plugin owns, gets a namespace of its own keyed by
+/// its qualified name.
+///
+/// Same NEVER-re-derive rule as [`MODELS_DIR_ENV`], and it bites harder here
+/// because the grant is a write: a stage that computes its own spelling of this
+/// path gets a denial that reads exactly like a missing directory. The platform
+/// creates the directory before the spawn, so it exists by the time a stage
+/// looks. Absent (a stage run by hand) → no platform data root; a stage should
+/// treat writing as unavailable rather than guessing a location.
+pub const DATA_DIR_ENV: &str = "BRANCHKIT_STAGE_DATA";
