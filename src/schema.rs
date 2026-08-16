@@ -87,26 +87,26 @@ pub fn pipeline_schema_json() -> String {
         );
         // Device monitoring.
         row(
-            t::DEVICE_SNAPSHOT,
-            sub::<DeviceSnapshot>(&mut generator),
+            t::AUDIO_DEVICE_SNAPSHOT,
+            sub::<AudioDeviceSnapshot>(&mut generator),
             false,
             "stage → host",
         );
         row(
-            t::DEVICE_ADDED,
-            sub::<DeviceAdded>(&mut generator),
+            t::AUDIO_DEVICE_ADDED,
+            sub::<AudioDeviceAdded>(&mut generator),
             false,
             "stage → host",
         );
         row(
-            t::DEVICE_REMOVED,
-            sub::<DeviceRemoved>(&mut generator),
+            t::AUDIO_DEVICE_REMOVED,
+            sub::<AudioDeviceRemoved>(&mut generator),
             false,
             "stage → host",
         );
         row(
-            t::DEFAULT_DEVICE_CHANGED,
-            sub::<DefaultDeviceChanged>(&mut generator),
+            t::AUDIO_DEVICE_DEFAULT_CHANGED,
+            sub::<AudioDeviceDefaultChanged>(&mut generator),
             false,
             "stage → host",
         );

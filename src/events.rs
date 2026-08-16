@@ -23,10 +23,10 @@ pub mod event_type {
     pub const ERROR: &str = "error";
     pub const VOCABULARY_UPDATE: &str = "vocabulary_update";
 
-    pub const DEVICE_SNAPSHOT: &str = "device_snapshot";
-    pub const DEVICE_ADDED: &str = "device_added";
-    pub const DEVICE_REMOVED: &str = "device_removed";
-    pub const DEFAULT_DEVICE_CHANGED: &str = "default_device_changed";
+    pub const AUDIO_DEVICE_SNAPSHOT: &str = "audio_device_snapshot";
+    pub const AUDIO_DEVICE_ADDED: &str = "audio_device_added";
+    pub const AUDIO_DEVICE_REMOVED: &str = "audio_device_removed";
+    pub const AUDIO_DEVICE_DEFAULT_CHANGED: &str = "audio_device_default_changed";
 
     pub const LOCATION_UPDATE: &str = "location_update";
     pub const LOCATION_ERROR: &str = "location_error";
@@ -55,10 +55,10 @@ pub mod event_type {
         FLOW_CREDIT,
         ERROR,
         VOCABULARY_UPDATE,
-        DEVICE_SNAPSHOT,
-        DEVICE_ADDED,
-        DEVICE_REMOVED,
-        DEFAULT_DEVICE_CHANGED,
+        AUDIO_DEVICE_SNAPSHOT,
+        AUDIO_DEVICE_ADDED,
+        AUDIO_DEVICE_REMOVED,
+        AUDIO_DEVICE_DEFAULT_CHANGED,
         LOCATION_UPDATE,
         LOCATION_ERROR,
         HEADING_UPDATE,
@@ -258,7 +258,7 @@ pub struct VocabularyUpdate {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DeviceInfo {
+pub struct AudioDeviceInfo {
     pub device_id: u32,
     pub uid: String,
     pub name: String,
@@ -270,19 +270,19 @@ pub struct DeviceInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DeviceSnapshot {
-    pub devices: Vec<DeviceInfo>,
+pub struct AudioDeviceSnapshot {
+    pub devices: Vec<AudioDeviceInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DeviceAdded {
-    pub device: DeviceInfo,
+pub struct AudioDeviceAdded {
+    pub device: AudioDeviceInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DeviceRemoved {
+pub struct AudioDeviceRemoved {
     pub device_id: u32,
     pub uid: String,
     pub name: String,
@@ -290,7 +290,7 @@ pub struct DeviceRemoved {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DefaultDeviceChanged {
+pub struct AudioDeviceDefaultChanged {
     pub direction: String,
     pub device_id: u32,
     pub uid: String,
