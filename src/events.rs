@@ -39,8 +39,36 @@ pub mod event_type {
 
     pub const POWER_SNAPSHOT: &str = "power_snapshot";
     pub const POWER_SOURCE_CHANGED: &str = "power_source_changed";
-    pub const SYSTEM_WILL_SLEEP: &str = "system_will_sleep";
-    pub const SYSTEM_DID_WAKE: &str = "system_did_wake";
+
+    /// Every tag above, in declaration order — the single list the schema
+    /// projection and the conformance harness both check themselves against,
+    /// so a new tag cannot reach one and miss the other. `schema.rs` asserts
+    /// every member has a row (a missing row would otherwise regenerate
+    /// `contracts/pipeline.json` byte-identical and sail through
+    /// `just check-stage-gen`).
+    pub const ALL: &[&str] = &[
+        CAPABILITY,
+        AUDIO_START,
+        AUDIO_CHUNK,
+        AUDIO_STOP,
+        TRANSCRIPT,
+        FLOW_CREDIT,
+        ERROR,
+        VOCABULARY_UPDATE,
+        DEVICE_SNAPSHOT,
+        DEVICE_ADDED,
+        DEVICE_REMOVED,
+        DEFAULT_DEVICE_CHANGED,
+        LOCATION_UPDATE,
+        LOCATION_ERROR,
+        HEADING_UPDATE,
+        DISPLAY_SNAPSHOT,
+        DISPLAY_ADDED,
+        DISPLAY_REMOVED,
+        DISPLAY_CHANGED,
+        POWER_SNAPSHOT,
+        POWER_SOURCE_CHANGED,
+    ];
 }
 
 /// Prefix of the custom-event namespace: `ext.<vendor>.<name>`.
@@ -358,12 +386,6 @@ pub struct PowerSnapshot {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PowerSourceChanged {
     pub state: PowerState,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SystemSleepWake {
-    pub timestamp: f64,
 }
 
 /// Mint a fresh session ID. RFC 4122 v4 UUID derived from `getrandom`.

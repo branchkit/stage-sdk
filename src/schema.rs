@@ -167,17 +167,20 @@ pub fn pipeline_schema_json() -> String {
             false,
             "stage → host",
         );
-        row(
-            t::SYSTEM_WILL_SLEEP,
-            sub::<SystemSleepWake>(&mut generator),
-            false,
-            "stage → host",
-        );
-        row(
-            t::SYSTEM_DID_WAKE,
-            sub::<SystemSleepWake>(&mut generator),
-            false,
-            "stage → host",
+    }
+
+    // A tag with no row regenerates contracts/pipeline.json byte-identical,
+    // so `just check-stage-gen` cannot see the omission — this can.
+    {
+        let tagged: Vec<&str> = rows.iter().map(|r| r.tag).collect();
+        let missing: Vec<&&str> = event_type::ALL
+            .iter()
+            .filter(|t| !tagged.contains(t))
+            .collect();
+        assert!(
+            missing.is_empty() && tagged.len() == event_type::ALL.len(),
+            "event_type::ALL and the schema row list disagree (missing rows: \
+             {missing:?}) — every wire tag needs exactly one row() call here"
         );
     }
 
