@@ -17,7 +17,6 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-
 /// Which slice of the vocabulary a type or tag belongs to.
 ///
 /// This is the SDK-surface half of decision (v) — the platform decodes an
@@ -449,7 +448,10 @@ pub fn go_source(doc: &Value, tier: Tier) -> String {
 
 pub fn ts_source(doc: &Value, tier: Tier) -> String {
     let mut out = String::from(HEADER);
-    out.push_str(&format!("//\n// {}\n\n", tier.blurb().replace("\n// ", "\n// ")));
+    out.push_str(&format!(
+        "//\n// {}\n\n",
+        tier.blurb().replace("\n// ", "\n// ")
+    ));
 
     let cross = cross_tier_refs(doc, tier);
     if !cross.is_empty() {

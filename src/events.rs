@@ -122,7 +122,7 @@ impl AudioFormat {
     };
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Capability {
     pub stage_type: String,
@@ -140,6 +140,29 @@ pub struct Capability {
     /// stage declares nothing (pre-existing stages).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emits: Vec<String>,
+    /// Custom event types this stage accepts from the stage ABOVE it in a
+    /// pipeline — exact `ext.<vendor>.<name>` types, or `ext.<vendor>.*`
+    /// globs.
+    ///
+    /// This is the stage-to-stage valve. The typed families (`audio_*`,
+    /// `transcript`) always flow to the next stage and need no declaration;
+    /// `ext.*` events do not, because the platform's default for a vocabulary
+    /// it cannot decode is to hop it onto the event bus. Declaring a type here
+    /// says "send it to me instead", which is what lets two stages agree on a
+    /// vocabulary the platform knows nothing about — frames, MIDI, sensor
+    /// readings, anything.
+    ///
+    /// Checked when the pipeline is wired: a declared type its upstream
+    /// neighbour does not emit is a mis-wire and fails loudly, rather than
+    /// leaving the stage waiting for something that can never arrive.
+    ///
+    /// Forwarded events are NOT also published to the bus — downstream
+    /// delivery replaces it. Backpressure on them is the pipe's, not the
+    /// credit window's: a flooding producer blocks on the OS buffer. The
+    /// windowed credit that `audio_chunk` gets buys abort and visibility on
+    /// top of that, and no custom vocabulary has needed it yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consumes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
