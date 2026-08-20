@@ -1,20 +1,44 @@
 //! Regenerate the Go and TypeScript event vocabulary from the pipeline
-//! contract. Usage: `emit-stage-sdk <go-output-path> <ts-output-path>`.
+//! contract, split by tier so the default import is domain-free.
+//! Usage: `emit-stage-sdk <go-pipeline-dir> <ts-src-dir>`.
 
+use branchkit_stage_sdk::codegen::Tier;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let (Some(go_path), Some(ts_path)) = (args.next(), args.next()) else {
-        eprintln!("usage: emit-stage-sdk <go-output-path> <ts-output-path>");
+    let (Some(go_root), Some(ts_root)) = (args.next(), args.next()) else {
+        eprintln!("usage: emit-stage-sdk <go-pipeline-dir> <ts-src-dir>");
         std::process::exit(2);
     };
     let doc = branchkit_stage_sdk::schema::pipeline_schema_value();
-    let go = gofmt(branchkit_stage_sdk::codegen::go_source(&doc));
-    std::fs::write(&go_path, go).expect("write Go output");
-    std::fs::write(&ts_path, branchkit_stage_sdk::codegen::ts_source(&doc))
+
+    for &tier in Tier::ALL {
+        // Go: the root tier is the `pipeline` package itself; each other tier
+        // is a sub-package, so an author's default import stays domain-free.
+        let go_dir = match tier.module() {
+            None => std::path::PathBuf::from(&go_root),
+            Some(m) => std::path::Path::new(&go_root).join(m),
+        };
+        std::fs::create_dir_all(&go_dir).expect("create Go package dir");
+        std::fs::write(
+            go_dir.join("events_gen.go"),
+            gofmt(branchkit_stage_sdk::codegen::go_source(&doc, tier)),
+        )
+        .expect("write Go output");
+
+        // TS: sibling modules, surfaced as package subpaths.
+        let ts_name = match tier.module() {
+            None => "pipeline_events_gen.ts".to_string(),
+            Some(m) => format!("pipeline_events_{m}_gen.ts"),
+        };
+        std::fs::write(
+            std::path::Path::new(&ts_root).join(ts_name),
+            branchkit_stage_sdk::codegen::ts_source(&doc, tier),
+        )
         .expect("write TS output");
+    }
 }
 
 /// Pipe emitted Go through `gofmt`, so "generated Go" is by definition
