@@ -2,9 +2,13 @@
 //! pipeline stages can be authored out-of-tree without depending on the
 //! proprietary actuator crate.
 //!
-//! Three modules, extracted verbatim from `branch_actuator::pipeline` (which
-//! re-exports them at the old paths for its internal callers):
+//! [`stage`] is the entry point most stages want — it owns the handshake,
+//! credit, and leniency obligations that sit above framing. The rest is the
+//! surface it is built from, extracted verbatim from `branch_actuator::pipeline`
+//! (which re-exports them at the old paths for its internal callers):
 //!
+//! - [`stage`] — the runtime: [`stage::serve_consumer`] for read-driven stages,
+//!   [`stage::serve_source`] for notifier-driven ones.
 //! - [`wire`] — the framing: one JSON header line, optional binary payload.
 //! - [`events`] — the typed event vocabulary that serializes into
 //!   `Event::data` (audio, transcript, flow credit, device/location/display/
@@ -23,6 +27,7 @@ pub mod events;
 pub mod grammar_dag;
 #[cfg(feature = "schema")]
 pub mod schema;
+pub mod stage;
 pub mod stage_log;
 pub mod wire;
 
