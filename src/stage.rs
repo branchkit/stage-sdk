@@ -352,8 +352,9 @@ pub struct SourceOptions {
     /// This is what makes an audio source out of an event source: the runner
     /// ends a session by writing `audio_stop` to the source's stdin, and the
     /// stop may carry a `cutoff_ms` the source must forward verbatim on its
-    /// own downstream `audio_stop` (`notes/DESIGN_DICTATION_AUDIO_CUTOFF.md`).
-    /// Read it back with [`SourceCtx::stop_request`].
+    /// own downstream `audio_stop`, so a consumer buffering ahead of the stop
+    /// does not process audio past it. Read it back with
+    /// [`SourceCtx::stop_request`].
     ///
     /// Off by default, deliberately: the monitor stages never open stdin
     /// today, and turning that on for them would be a behavior change rather

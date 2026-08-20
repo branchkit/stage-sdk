@@ -162,10 +162,13 @@ pub struct AudioStop {
     pub session_id: String,
     /// Shared-clock position (the AudioChunk `timestamp_ms` timebase) after
     /// which buffered audio must NOT be processed. Set when the stop was
-    /// triggered by an event whose audio position is known — the dictation
-    /// stop phrase (notes/DESIGN_DICTATION_AUDIO_CUTOFF.md). A source stage
-    /// forwards it verbatim on its downstream AudioStop; batch consumers
-    /// (whisperkit) truncate their buffer at it; absent = process everything.
+    /// triggered by something whose audio position is known — a recognized
+    /// stop phrase, say — so that a consumer buffering ahead of the trigger
+    /// does not process audio the user never meant to send.
+    ///
+    /// A source stage forwards it verbatim on its downstream AudioStop; a
+    /// batch consumer truncates its buffer at it; absent = process
+    /// everything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cutoff_ms: Option<u64>,
 }
@@ -178,30 +181,38 @@ pub struct Transcript {
     pub partial: bool,
     #[serde(rename = "final")]
     pub is_final: bool,
-    /// Coarse scalar confidence for the whole transcript — the MEAN of
-    /// `word_scores` on the sherpa CTC path, or an engine's own scalar where it
-    /// has no per-word signal. Deliberately coarse: a confidence GATE must read
-    /// `word_scores` (the min margin), never this. The mean hides a single
-    /// deeply-coerced word — a decode scoring [+8, -3] means +2.5 and sails past
-    /// a mean threshold the min-based data says should fail
-    /// (notes/DESIGN_ENGINE_POSTERIORS.md). For display/logging only.
+    /// Coarse scalar confidence for the whole transcript: the MEAN of
+    /// `word_scores` when the engine produces them, or its own scalar when it
+    /// has no per-word signal.
+    ///
+    /// Deliberately coarse, and the reason matters — **a confidence GATE must
+    /// read `word_scores` (the minimum), never this.** A mean hides a single
+    /// badly-supported word: scores of [+8, -3] average to +2.5 and sail past
+    /// a threshold the per-word data says should fail. For display and
+    /// logging only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
-    /// Shared-clock onset (ms, the AudioChunk timestamp_ms timebase) of each
+    /// Shared-clock onset (ms, the AudioChunk `timestamp_ms` timebase) of each
     /// word of `text`, aligned 1:1 with its whitespace-split words. Emitted by
-    /// engines with alignment (sherpa's CTC path); lets a consumer convert a
-    /// word position into an audio position that is meaningful to OTHER
-    /// concurrently-running pipelines — the dictation stop-phrase audio
-    /// cutoff (notes/DESIGN_DICTATION_AUDIO_CUTOFF.md).
+    /// engines that produce alignment; omitted by those that do not.
+    ///
+    /// Because the timebase is the shared clock rather than a per-session
+    /// counter, a consumer can convert a word position into an audio position
+    /// that is meaningful to OTHER concurrently-running pipelines — which is
+    /// what makes `AudioStop::cutoff_ms` possible across pipelines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub word_onsets_ms: Option<Vec<u64>>,
     /// Per-word acoustic score, aligned 1:1 with `text`'s whitespace-split
-    /// words (same alignment contract as `word_onsets_ms`). On the sherpa CTC
-    /// path this is the word's min token argmax-margin: positive = the audio
-    /// supported the word, negative = the closed grammar coerced it
-    /// (notes/DESIGN_ENGINE_POSTERIORS.md). When present, `confidence` is the
-    /// mean of these. Log-only today — enforcement gates land per-consumer
-    /// once field distributions are measured.
+    /// words (same alignment contract as `word_onsets_ms`).
+    ///
+    /// Sign is the contract; magnitude is the engine's own scale. Positive
+    /// means the audio supported the word. Negative means the decoder's
+    /// language constraint outweighed weak acoustic evidence — the word was
+    /// produced because the grammar allowed it, not because it was heard. A
+    /// stage that computes these should document its own scale; a consumer
+    /// that gates on them should read the MINIMUM, per `confidence` above.
+    ///
+    /// When present, `confidence` is the mean of these.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub word_scores: Option<Vec<f32>>,
 }
