@@ -16,14 +16,39 @@
 //! There are two, because there are two loop shapes (verified across all
 //! first-party stages — `notes/DESIGN_STAGE_AUTHORING.md`):
 //!
-//! - [`serve_consumer`] — **read-driven**. The stage's work is a reaction to
-//!   inbound events. VAD gates, STT engines, command recognizers.
+//! - [`serve_audio_consumer`] — **read-driven**. The stage's work is a reaction
+//!   to an inbound audio session. VAD gates, STT engines, command recognizers.
 //! - [`serve_source`] — **notifier-driven**. The stage produces spontaneously
 //!   from a device, OS notification, or timer, and may never read stdin at
 //!   all. Power/display/location monitors, microphones.
 //!
 //! An audio source is the second shape plus a stdin listener for the stop
-//! request; see [`SourceOptions::stop_on_stdin_eof`].
+//! request; see [`SourceOptions::listen_for_stop`].
+//!
+//! # Why one is media-neutral and the other is not
+//!
+//! The asymmetry in those names is deliberate, and it is a property of the
+//! wire rather than of this module.
+//!
+//! [`serve_source`] is domain-free: it assumes nothing about what you emit, and
+//! four non-audio stages ship on it today (power, display, location, audio
+//! device). A gaze tracker, a foot pedal, an EMG sensor, a presence detector
+//! are all the same shape — something external notifies you, you emit — and the
+//! `feeds` declaration plus the `ext.<vendor>.*` namespace is already their
+//! route onto the bus.
+//!
+//! [`serve_audio_consumer`] is audio-bound because **audio is the only stream
+//! the wire has**. Of the pipeline contract's event types, the streaming ones
+//! are `audio_start` / `audio_chunk` / `audio_stop`; everything else is a
+//! discrete event. Flow credit counts audio frames. A frame-consuming stage —
+//! screen OCR, gesture or lip-VAD vision — has no typed stream to consume, so
+//! it would fall through to [`AudioConsumer::on_other`] and hand-roll exactly
+//! what this module exists to remove.
+//!
+//! That is a contract question, not an SDK one: this runtime cannot be more
+//! general than the protocol it speaks, and generalizing the wire to a
+//! media-typed stream is a much larger decision than naming things honestly
+//! here. Decision (p), `notes/DESIGN_STAGE_AUTHORING.md`.
 //!
 //! # Flow credit: which side are you on
 //!
@@ -32,7 +57,7 @@
 //!
 //! - **Consuming audio → you must grant credit.** That is what
 //!   [`CreditPolicy`] and [`crate::credit::CreditGranter`] are for, and
-//!   [`serve_consumer`] drives it for you.
+//!   [`serve_audio_consumer`] drives it for you.
 //! - **Producing audio → you must not implement credit at all.** The platform
 //!   sits between every pair of stages and holds the sender-side window; a
 //!   producer that outruns it blocks on the pipe. There is deliberately no
@@ -149,13 +174,13 @@ pub enum Flow {
 
 /// What a callback is handed: the outbound writer, plus the credit granter
 /// wired to this stage's policy.
-pub struct Ctx {
+pub struct AudioCtx {
     writer: Writer<BoxWrite>,
     credit: CreditGranter,
     policy: CreditPolicy,
 }
 
-impl Ctx {
+impl AudioCtx {
     /// Serialize `data` and write it as one framed event.
     pub async fn emit<T: Serialize>(&mut self, event_type: &str, data: &T) -> Result {
         let value = serde_json::to_value(data)?;
@@ -199,15 +224,15 @@ impl Ctx {
 ///
 /// Every method has a default, so a stage implements only the events it cares
 /// about. The runtime decodes `data` into the typed event before dispatch and
-/// routes anything it does not decode to [`Consumer::on_other`].
+/// routes anything it does not decode to [`AudioConsumer::on_other`].
 //
 // `async fn` in a public trait: stages run on a single-threaded runtime
 // (`#[tokio::main(flavor = "current_thread")]`, all of them), so the absent
 // `Send` bound the lint warns about is not a constraint any stage can hit.
 #[allow(async_fn_in_trait)]
-pub trait Consumer {
+pub trait AudioConsumer {
     /// A session began upstream.
-    async fn on_audio_start(&mut self, _ev: AudioStart, _ctx: &mut Ctx) -> Result {
+    async fn on_audio_start(&mut self, _ev: AudioStart, _ctx: &mut AudioCtx) -> Result {
         Ok(())
     }
 
@@ -217,36 +242,36 @@ pub trait Consumer {
         &mut self,
         _ev: AudioChunk,
         _payload: &[u8],
-        _ctx: &mut Ctx,
+        _ctx: &mut AudioCtx,
     ) -> Result<Chunk> {
         Ok(Chunk::Counted)
     }
 
     /// The session ended. A `per_run` stage emits its final result here and
     /// returns [`Flow::Stop`].
-    async fn on_audio_stop(&mut self, _ev: AudioStop, _ctx: &mut Ctx) -> Result<Flow> {
+    async fn on_audio_stop(&mut self, _ev: AudioStop, _ctx: &mut AudioCtx) -> Result<Flow> {
         Ok(Flow::Continue)
     }
 
     /// Any event the runtime did not decode, including unknown types.
     /// Ignoring them is the default because wire leniency is contract.
-    async fn on_other(&mut self, _ev: Event, _ctx: &mut Ctx) -> Result<Flow> {
+    async fn on_other(&mut self, _ev: Event, _ctx: &mut AudioCtx) -> Result<Flow> {
         Ok(Flow::Continue)
     }
 
     /// Clean EOF on stdin — upstream closed.
-    async fn on_eof(&mut self, _ctx: &mut Ctx) -> Result {
+    async fn on_eof(&mut self, _ctx: &mut AudioCtx) -> Result {
         Ok(())
     }
 }
 
 /// Serve a read-driven stage on stdin/stdout.
-pub async fn serve_consumer<C: Consumer>(
+pub async fn serve_audio_consumer<C: AudioConsumer>(
     cap: Capability,
     policy: CreditPolicy,
     handler: &mut C,
 ) -> Result {
-    serve_consumer_on(
+    serve_audio_consumer_on(
         Box::new(tokio::io::stdin()),
         Box::new(tokio::io::stdout()),
         cap,
@@ -256,9 +281,9 @@ pub async fn serve_consumer<C: Consumer>(
     .await
 }
 
-/// [`serve_consumer`] over explicit transports. The stdio wrapper is the one
+/// [`serve_audio_consumer`] over explicit transports. The stdio wrapper is the one
 /// stages use; this exists so the runtime itself is testable over a duplex.
-pub async fn serve_consumer_on<C: Consumer>(
+pub async fn serve_audio_consumer_on<C: AudioConsumer>(
     reader: BoxRead,
     writer: BoxWrite,
     cap: Capability,
@@ -266,7 +291,7 @@ pub async fn serve_consumer_on<C: Consumer>(
     handler: &mut C,
 ) -> Result {
     let mut reader = Reader::new(reader);
-    let mut ctx = Ctx {
+    let mut ctx = AudioCtx {
         writer: Writer::new(writer),
         credit: CreditGranter::new(policy.every.max(1), policy.grant),
         policy,
@@ -538,9 +563,9 @@ mod tests {
         }
     }
 
-    /// Drive `serve_consumer_on` with a scripted inbound event list, returning
+    /// Drive `serve_audio_consumer_on` with a scripted inbound event list, returning
     /// everything the stage wrote.
-    async fn run_consumer<C: Consumer>(
+    async fn run_consumer<C: AudioConsumer>(
         handler: &mut C,
         policy: CreditPolicy,
         inbound: Vec<Event>,
@@ -555,7 +580,7 @@ mod tests {
         }
         drop(w); // EOF — shutdown() flushes but does not close.
 
-        serve_consumer_on(
+        serve_audio_consumer_on(
             Box::new(stage_r),
             Box::new(stage_w),
             cap("processor"),
@@ -599,8 +624,8 @@ mod tests {
         stop_on_stop: bool,
     }
 
-    impl Consumer for Counter {
-        async fn on_audio_start(&mut self, _ev: AudioStart, _ctx: &mut Ctx) -> Result {
+    impl AudioConsumer for Counter {
+        async fn on_audio_start(&mut self, _ev: AudioStart, _ctx: &mut AudioCtx) -> Result {
             self.starts += 1;
             Ok(())
         }
@@ -608,7 +633,7 @@ mod tests {
             &mut self,
             _ev: AudioChunk,
             _payload: &[u8],
-            _ctx: &mut Ctx,
+            _ctx: &mut AudioCtx,
         ) -> Result<Chunk> {
             self.chunks += 1;
             Ok(if self.drop_chunks {
@@ -617,7 +642,7 @@ mod tests {
                 Chunk::Counted
             })
         }
-        async fn on_audio_stop(&mut self, _ev: AudioStop, _ctx: &mut Ctx) -> Result<Flow> {
+        async fn on_audio_stop(&mut self, _ev: AudioStop, _ctx: &mut AudioCtx) -> Result<Flow> {
             self.stops += 1;
             Ok(if self.stop_on_stop {
                 Flow::Stop
@@ -625,11 +650,11 @@ mod tests {
                 Flow::Continue
             })
         }
-        async fn on_other(&mut self, _ev: Event, _ctx: &mut Ctx) -> Result<Flow> {
+        async fn on_other(&mut self, _ev: Event, _ctx: &mut AudioCtx) -> Result<Flow> {
             self.others += 1;
             Ok(Flow::Continue)
         }
-        async fn on_eof(&mut self, _ctx: &mut Ctx) -> Result {
+        async fn on_eof(&mut self, _ctx: &mut AudioCtx) -> Result {
             self.eofs += 1;
             Ok(())
         }

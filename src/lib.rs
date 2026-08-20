@@ -7,8 +7,9 @@
 //! surface it is built from, extracted verbatim from `branch_actuator::pipeline`
 //! (which re-exports them at the old paths for its internal callers):
 //!
-//! - [`stage`] — the runtime: [`stage::serve_consumer`] for read-driven stages,
-//!   [`stage::serve_source`] for notifier-driven ones.
+//! - [`stage`] — the runtime: [`stage::serve_audio_consumer`] for read-driven
+//!   stages, [`stage::serve_source`] for notifier-driven ones. The naming
+//!   asymmetry is the wire's, not the module's — see that module's docs.
 //! - [`wire`] — the framing: one JSON header line, optional binary payload.
 //! - [`events`] — the typed event vocabulary that serializes into
 //!   `Event::data` (audio, transcript, flow credit, device/location/display/
