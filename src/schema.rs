@@ -22,6 +22,15 @@ struct EventRow {
 
 /// Build the full pipeline contract document as pretty-printed JSON.
 pub fn pipeline_schema_json() -> String {
+    let mut out =
+        serde_json::to_string_pretty(&pipeline_schema_value()).expect("schema document serializes");
+    out.push('\n');
+    out
+}
+
+/// The contract document itself. The Go/TS emitters project from exactly this
+/// value, so the ports cannot drift from the schema independently.
+pub fn pipeline_schema_value() -> Value {
     let settings = SchemaSettings::draft2020_12().with(|s| {
         s.definitions_path = "#/components/schemas/".into();
     });
@@ -219,9 +228,7 @@ pub fn pipeline_schema_json() -> String {
         },
         "components": { "schemas": Value::Object(definitions) }
     });
-    let mut out = serde_json::to_string_pretty(&doc).expect("schema document serializes");
-    out.push('\n');
-    out
+    doc
 }
 
 fn sub<T: JsonSchema>(generator: &mut SchemaGenerator) -> Value {

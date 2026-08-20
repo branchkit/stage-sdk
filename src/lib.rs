@@ -23,6 +23,8 @@
 //!
 //! Boundary and roadmap: `notes/DESIGN_STAGE_SDK.md` in the app repo.
 
+#[cfg(feature = "schema")]
+pub mod codegen;
 pub mod credit;
 pub mod events;
 pub mod grammar_dag;
