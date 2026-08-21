@@ -3,7 +3,11 @@ name = "branchkit-stage-sdk"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "BranchKit pipeline stage SDK: wire framing, event vocabulary, and stage logging for out-of-tree pipeline stages"
+description = "BranchKit pipeline stage SDK: wire framing, event vocabulary, stage runtime, and stage logging for out-of-tree pipeline stages"
+repository = "https://github.com/branchkit/stage-sdk"
+readme = "README.md"
+keywords = ["branchkit", "pipeline", "stage", "sdk"]
+categories = ["api-bindings"]
 
 [features]
 # Schema emission only — stage consumers never need this. The emit binary

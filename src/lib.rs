@@ -21,7 +21,8 @@
 //! - [`credit`] — receiver-side flow-credit granting (the counter + emission
 //!   mechanism; window sizes stay per-stage policy).
 //!
-//! Boundary and roadmap: `notes/DESIGN_STAGE_SDK.md` in the app repo.
+//! The conformance harness in `branchkit/stage-sdk-test` is the acceptance
+//! bar for a stage built against this crate.
 
 #[cfg(feature = "schema")]
 pub mod codegen;

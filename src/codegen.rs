@@ -1,7 +1,7 @@
 //! Generate the Go and TypeScript event vocabulary from the pipeline contract.
 //!
 //! The Rust types are the source of truth, `contracts/pipeline.json` is their
-//! projection (decision (c), `notes/DESIGN_STAGE_SDK.md`), and these ports are
+//! projection, and these ports are
 //! a projection of that same document — so a stage author in Go or TypeScript
 //! gets typed events without anyone hand-maintaining a second catalog.
 //!

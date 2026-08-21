@@ -6,7 +6,8 @@
 //! `branch_actuator::pipeline::grammar_dag`, which re-exports these types so
 //! producer and consumer share one definition — no second copy to drift.
 //!
-//! See `notes/DESIGN_COMMAND_GRAMMAR_COMPILER.md` for the D1/D2/D3 design.
+//! A recognition stage DECODES these; the builder that produces them lives
+//! in the platform, which is why only the wire types are here.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +60,7 @@ impl GrammarDagWire {
     /// alphabets, `dropped_alts`), so hash-equal ⟺ byte-equal for the
     /// deterministic compiler output. Replaces hashing the serialized JSON
     /// string in the broadcast dedup gate: same discrimination, no
-    /// serialization (`notes/DESIGN_MATCHING_HOT_PATH.md`). Not `derive(Hash)`
+    /// serialization on a hot path. Not `derive(Hash)`
     /// because `weight: Option<f32>` needs `to_bits`.
     pub fn structural_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};

@@ -14,7 +14,7 @@
 //! # Which entry point
 //!
 //! There are two, because there are two loop shapes (verified across all
-//! first-party stages — `notes/DESIGN_STAGE_AUTHORING.md`):
+//! first-party stages):
 //!
 //! - [`serve_audio_consumer`] — **read-driven**. The stage's work is a reaction
 //!   to an inbound audio session. VAD gates, STT engines, command recognizers.
@@ -48,7 +48,7 @@
 //! That is a contract question, not an SDK one: this runtime cannot be more
 //! general than the protocol it speaks, and generalizing the wire to a
 //! media-typed stream is a much larger decision than naming things honestly
-//! here. Decision (p), `notes/DESIGN_STAGE_AUTHORING.md`.
+//! here.
 //!
 //! # Flow credit: which side are you on
 //!
@@ -106,7 +106,7 @@ pub async fn run<F: Future<Output = Result>>(body: F) {
 /// When the runtime emits the initial credit window.
 ///
 /// The *numbers* are receiver-chosen buffering policy and stay at the call
-/// site (decision (e), `notes/DESIGN_STAGE_SDK.md`); only the mechanism is
+/// site; only the mechanism is
 /// shared. This enum captures the one structural difference observed between
 /// stages: whether the window opens before any session exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,6 +561,7 @@ mod tests {
             lifecycle_modes: vec!["persistent".into()],
             feature_flags: serde_json::Map::new(),
             emits: vec![],
+            consumes: vec![],
         }
     }
 

@@ -4,8 +4,7 @@
 //!
 //! Stages write on stderr; the actuator's stage stderr reader
 //! (`pipeline::stage`) parses the `BKLOG1` sentinel format into correlated
-//! `stage.diagnostic` bus events (`notes/DESIGN_UNIFIED_SUBPROCESS_LOGGING.md`,
-//! Layer 2). Lines without the sentinel — native-library output, panics, a
+//! `stage.diagnostic` bus events. Lines without the sentinel — native-library output, panics, a
 //! not-yet-migrated stage — still reach the bus via the reader's generic
 //! fallback, just uncorrelated and at `info`.
 //!

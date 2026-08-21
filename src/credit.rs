@@ -8,7 +8,7 @@
 //! STT engine wants shallow queues). This helper owns only the mechanism every
 //! receiver used to hand-roll: the chunks-since-last-grant counter and the
 //! `flow_credit` emission. Each stage keeps its exact numbers at the call
-//! site. Decision (e), `notes/DESIGN_STAGE_SDK.md`.
+//! site.
 
 use std::io;
 

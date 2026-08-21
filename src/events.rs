@@ -520,9 +520,15 @@ mod tests {
             lifecycle_modes: vec!["persistent".into()],
             feature_flags: serde_json::Map::new(),
             emits: vec![],
+            consumes: vec![],
         };
         let v = serde_json::to_value(&cap).unwrap();
         assert!(v.get("emits").is_none(), "empty emits must be omitted");
+        assert!(
+            v.get("consumes").is_none(),
+            "empty consumes must be omitted — a stage that declares nothing must \
+             serialize exactly as it did before the valve existed"
+        );
         // Old capability payloads (no emits key) still decode.
         let old: Capability = serde_json::from_value(v).unwrap();
         assert!(old.emits.is_empty());
