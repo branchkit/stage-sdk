@@ -10,6 +10,24 @@ that: it owns the obligations every stage otherwise hand-rolls, and that fail
 
 MIT licensed. Depends on nothing from the BranchKit platform.
 
+## Install
+
+```bash
+cargo add branchkit-stage-sdk
+```
+
+Or by hand:
+
+```toml
+[dependencies]
+branchkit-stage-sdk = "0.1"
+tokio = { version = "1", features = ["full"] }
+```
+
+A stage is a `tokio` binary, so you bring your own runtime. The `schema`
+feature is for regenerating the platform's pipeline schema and is not
+something a stage enables.
+
 ## Two shapes
 
 ```rust
