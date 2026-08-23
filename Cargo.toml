@@ -24,9 +24,15 @@ name = "emit-stage-sdk"
 path = "src/bin/emit_stage_sdk.rs"
 required-features = ["schema"]
 
+# Concrete versions, NOT `workspace = true`. This crate is published and is
+# consumed by out-of-tree stages, so its manifest has to resolve on its own:
+# inherited deps only resolve inside the app workspace, which made a clone or
+# a `cargo add --git` of this repo fail to parse the manifest at all — the
+# exact consumption path the split-out was for. Kept in step with the app
+# workspace's versions by `just check-stage-sdk-standalone`.
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
 getrandom = "0.2"
 schemars = { version = "1", optional = true }
