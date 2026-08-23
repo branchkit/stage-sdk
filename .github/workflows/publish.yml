@@ -8,10 +8,14 @@ name: Publish to crates.io
 # crates.io trusts this repository AND this workflow filename, so renaming the
 # file breaks publishing until the trusted publisher is updated to match.
 
+# NOTE: this workflow cannot perform the FIRST publish. Unlike PyPI, crates.io
+# has no pending-publisher concept — a trusted publisher can only be attached
+# to a crate that already exists, so v0.1.0 goes out once by hand with a
+# scoped API token and every release after that runs here.
 on:
   push:
     tags: ["v*"]
-  # Lets the first release happen without a tag, to claim the crate name.
+  # Manual re-runs (a failed publish step, a re-release of the same tag).
   workflow_dispatch:
 
 permissions:
