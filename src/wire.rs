@@ -3,7 +3,7 @@
 //! Each wire event is one JSON header line terminated by `\n`, optionally
 //! followed by exactly `payload_length` bytes of binary payload. Same
 //! framing across stdio child-process, Unix socket, and TCP. Locked
-//! 2026-05-03 — see `docs/in-progress/DESIGN_PIPELINE_PRIMITIVE.md` section 8.1.
+//! 2026-05-03 — see `docs/design/DESIGN_PIPELINE_PRIMITIVE.md` section 8.1.
 //!
 //! Wire shape:
 //!
