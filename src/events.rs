@@ -124,6 +124,20 @@ impl AudioFormat {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// NOTE for whoever adds the next field: this breaks every stage that builds a
+// `Capability` with a struct literal and does not end it in
+// `..Default::default()` — `accepts_config` broke nineteen sites the day it
+// landed. Call sites in this repo now all use the functional-update form, so
+// the next addition is free for them.
+//
+// It is NOT free for a third-party stage that spells every field out.
+// `#[non_exhaustive]` was tried here and reverted: it forbids struct
+// expressions cross-crate ENTIRELY (E0639) — `..Default::default()` does not
+// satisfy it — so it would force every stage author into
+// `Capability::default()` plus field assignment. Doing it properly means
+// shipping a constructor or builder first, which is a deliberate API task and
+// should not ride along with a field addition. Pre-launch is the moment to do
+// it if it is going to happen.
 pub struct Capability {
     pub stage_type: String,
     pub stage_name: String,
@@ -163,6 +177,34 @@ pub struct Capability {
     /// top of that, and no custom vocabulary has needed it yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumes: Vec<String>,
+    /// Custom event types this stage accepts as CONFIGURATION from the plugin
+    /// that ships it — exact `ext.<vendor>.<name>` types, or `ext.<vendor>.*`
+    /// globs.
+    ///
+    /// Distinct from [`Capability::consumes`], and deliberately not folded
+    /// into it. `consumes` is the stage-to-stage valve: its types arrive from
+    /// the stage ABOVE in the pipeline, and the wiring check fails loudly when
+    /// the upstream neighbour does not emit a declared type. Plugin config has
+    /// no upstream neighbour, so reusing `consumes` would make every stage
+    /// that wants config fail to wire. Two different relations, two fields.
+    ///
+    /// The direction this opens is plugin → a stage it ships. It does not
+    /// loosen the bus rule: plugin emits of `ext.*` ONTO THE EVENT BUS stay
+    /// rejected, because a bus subscriber trusts the source attribution. A
+    /// message sent here never reaches the bus — it is written to one stage's
+    /// stdin, the recipient is named by the sender, and the platform checks
+    /// that the sender ships that stage. There is no attribution to forge.
+    ///
+    /// A stage should apply config it receives and keep working without it.
+    /// Gate on config only when the stage cannot be CORRECT without it (an
+    /// unseeded recognition grammar decodes to garbage, so `sherpa_commands`
+    /// drops audio until seeded); config that only improves QUALITY — a
+    /// decoder bias list, say — must never block the stage's real work.
+    ///
+    /// Empty = the stage accepts no plugin configuration, which is every
+    /// pre-existing stage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepts_config: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
