@@ -1,7 +1,11 @@
 [package]
 name = "branchkit-stage-sdk"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# Implied by edition 2024, stated because this crate is published: an unstated
+# MSRV reaches a consumer on an older toolchain as a wall of syntax errors
+# instead of "requires rustc 1.85".
+rust-version = "1.85"
 license = "MIT"
 description = "BranchKit pipeline stage SDK: wire framing, event vocabulary, stage runtime, and stage logging for out-of-tree pipeline stages"
 repository = "https://github.com/branchkit/stage-sdk"

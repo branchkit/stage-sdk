@@ -72,7 +72,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 
 use crate::credit::CreditGranter;
-use crate::events::{event_type, AudioChunk, AudioStart, AudioStop, Capability};
+use crate::events::{AudioChunk, AudioStart, AudioStop, Capability, event_type};
 use crate::stage_log;
 use crate::wire::{Event, Reader, Writer};
 
@@ -492,7 +492,7 @@ fn spawn_signal_watcher(stop: Arc<AtomicBool>, notify: Arc<Notify>) {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{signal, SignalKind};
+            use tokio::signal::unix::{SignalKind, signal};
             let (mut term, mut int) = match (
                 signal(SignalKind::terminate()),
                 signal(SignalKind::interrupt()),
@@ -562,6 +562,7 @@ mod tests {
             feature_flags: serde_json::Map::new(),
             emits: vec![],
             consumes: vec![],
+            ..Default::default()
         }
     }
 
@@ -721,9 +722,11 @@ mod tests {
         let grants = credits(&out);
         assert_eq!(h.chunks, 5);
         assert_eq!(grants.len(), 3, "1 initial + 2 cadence");
-        assert!(grants[1..]
-            .iter()
-            .all(|g| g.frames == 8 && g.session_id == "s1"));
+        assert!(
+            grants[1..]
+                .iter()
+                .all(|g| g.frames == 8 && g.session_id == "s1")
+        );
     }
 
     #[tokio::test]

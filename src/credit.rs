@@ -14,7 +14,7 @@ use std::io;
 
 use tokio::io::AsyncWrite;
 
-use crate::events::{event_type, FlowCredit};
+use crate::events::{FlowCredit, event_type};
 use crate::wire::{Event, Writer};
 
 /// Counts processed chunks and grants `grant` frames of credit after every

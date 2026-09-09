@@ -563,6 +563,7 @@ mod tests {
             feature_flags: serde_json::Map::new(),
             emits: vec![],
             consumes: vec![],
+            ..Default::default()
         };
         let v = serde_json::to_value(&cap).unwrap();
         assert!(v.get("emits").is_none(), "empty emits must be omitted");

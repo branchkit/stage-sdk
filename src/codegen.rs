@@ -64,10 +64,18 @@ impl Tier {
 
     fn blurb(self) -> &'static str {
         match self {
-            Tier::Core => "Transport vocabulary: the handshake, framing, error and flow-credit\n// types every stage speaks whatever its domain.",
-            Tier::Audio => "The audio session vocabulary. Import this if your stage produces or\n// consumes an audio stream.",
-            Tier::Recognition => "Recognition vocabulary: transcripts, the word union, and the\n// command-grammar DAG a recognizer decodes against. Import this only if\n// you are building a speech recognizer or an STT stage.",
-            Tier::Monitors => "First-party monitor families. Typed because the platform renames them\n// onto its bus as `_platform.*` events; a third-party monitor uses\n// `ext.<vendor>.*` instead and needs nothing from here.",
+            Tier::Core => {
+                "Transport vocabulary: the handshake, framing, error and flow-credit\n// types every stage speaks whatever its domain."
+            }
+            Tier::Audio => {
+                "The audio session vocabulary. Import this if your stage produces or\n// consumes an audio stream."
+            }
+            Tier::Recognition => {
+                "Recognition vocabulary: transcripts, the word union, and the\n// command-grammar DAG a recognizer decodes against. Import this only if\n// you are building a speech recognizer or an STT stage."
+            }
+            Tier::Monitors => {
+                "First-party monitor families. Typed because the platform renames them\n// onto its bus as `_platform.*` events; a third-party monitor uses\n// `ext.<vendor>.*` instead and needs nothing from here."
+            }
         }
     }
 }

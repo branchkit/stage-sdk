@@ -6,7 +6,7 @@
 
 use schemars::generate::SchemaSettings;
 use schemars::{JsonSchema, SchemaGenerator};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::events::*;
 use crate::grammar_dag::GrammarDagWire;
