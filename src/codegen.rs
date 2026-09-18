@@ -342,6 +342,10 @@ fn collect_refs(schema: &Value, tier: Tier, acc: &mut Vec<(&'static str, String)
     }
 }
 
+// The generated ports still export the deprecated `MODELS_DIR_ENV` spelling
+// for one release (the platform sets both env vars); emitting it here is the
+// point, not an oversight, and must not fail the `-Dwarnings` gen gates.
+#[allow(deprecated)]
 pub fn go_source(doc: &Value, tier: Tier) -> String {
     let mut out = String::from(HEADER);
     out.push_str(&format!("//\n// {}\n", tier.blurb()));
@@ -454,6 +458,10 @@ pub fn go_source(doc: &Value, tier: Tier) -> String {
     out
 }
 
+// The generated ports still export the deprecated `MODELS_DIR_ENV` spelling
+// for one release (the platform sets both env vars); emitting it here is the
+// point, not an oversight, and must not fail the `-Dwarnings` gen gates.
+#[allow(deprecated)]
 pub fn ts_source(doc: &Value, tier: Tier) -> String {
     let mut out = String::from(HEADER);
     out.push_str(&format!(
