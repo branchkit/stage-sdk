@@ -43,6 +43,13 @@ pub mod wire;
 /// not merely disagree — it points the stage at a directory the profile
 /// denies. Absent (e.g. a stage run by hand) → no platform model root; stages
 /// fall back to explicit paths or their own overrides.
+pub const ARTIFACTS_DIR_ENV: &str = "BRANCHKIT_ARTIFACTS_DIR";
+
+/// Deprecated spelling of [`ARTIFACTS_DIR_ENV`]. `models` was renamed to
+/// `artifacts` (docs/design/DESIGN_ARTIFACTS_RENAME.md); the platform sets
+/// both env vars for one release, and a stage should read the new one first
+/// and fall back to this. Removed a release after the rename.
+#[deprecated(note = "use ARTIFACTS_DIR_ENV; the platform sets both for one release")]
 pub const MODELS_DIR_ENV: &str = "BRANCHKIT_MODELS_DIR";
 
 /// Environment variable carrying the data directory a stage may write to, set
