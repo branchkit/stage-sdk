@@ -699,7 +699,11 @@ DATA_DIR_ENV = {:?}
                 out.push_str(&doc_lines(d, "#", "    "));
             }
             let base = py_type(fschema, tier);
-            let ty = if required { base } else { format!("NotRequired[{base}]") };
+            let ty = if required {
+                base
+            } else {
+                format!("NotRequired[{base}]")
+            };
             out.push_str(&format!("    \"{fname}\": {ty},\n"));
         }
         out.push_str("})\n\n");

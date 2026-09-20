@@ -8,8 +8,7 @@ use std::process::{Command, Stdio};
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let (Some(go_root), Some(ts_root), Some(py_root)) =
-        (args.next(), args.next(), args.next())
+    let (Some(go_root), Some(ts_root), Some(py_root)) = (args.next(), args.next(), args.next())
     else {
         eprintln!("usage: emit-stage-sdk <go-pipeline-dir> <ts-src-dir> <py-pipeline-dir>");
         std::process::exit(2);
