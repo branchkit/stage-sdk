@@ -46,7 +46,7 @@ pub mod wire;
 pub const ARTIFACTS_DIR_ENV: &str = "BRANCHKIT_ARTIFACTS_DIR";
 
 /// Deprecated spelling of [`ARTIFACTS_DIR_ENV`]. `models` was renamed to
-/// `artifacts` (docs/design/DESIGN_ARTIFACTS_RENAME.md); the platform sets
+/// `artifacts`; the platform sets
 /// both env vars for one release, and a stage should read the new one first
 /// and fall back to this. Removed a release after the rename.
 #[deprecated(note = "use ARTIFACTS_DIR_ENV; the platform sets both for one release")]

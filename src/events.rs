@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 /// Event-type tags — the closed wire vocabulary (projected into the
 /// generated `contracts/pipeline.json` event catalog).
 pub mod event_type {
+    // Admission: a tag names its payload's actual scope, not a broader one
+    // (heading_update is not a location; capability/flow_credit/error are
+    // unqualified because their scope is every stage). Keep tags flat
+    // snake_case: this vocabulary has one author, and dotted segments are
+    // collision machinery for many. Blank-line grouping below is a reading
+    // aid, not a contract.
     pub const CAPABILITY: &str = "capability";
     pub const AUDIO_START: &str = "audio_start";
     pub const AUDIO_CHUNK: &str = "audio_chunk";

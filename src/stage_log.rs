@@ -15,6 +15,10 @@
 //! correlates to the command's `tr_` (derived from the session id) without
 //! threading the id through every call site. Pooled stages just re-`set_session`
 //! on each `audio_start`.
+//!
+//! A stage with more than one event loop must call `set_session` in EVERY loop that
+//! handles `audio_start`: one sherpa loop once logged uncorrelated because only the
+//! other loop set the session. Soak against the live config, not just one path.
 
 use std::sync::Mutex;
 
