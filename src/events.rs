@@ -90,7 +90,16 @@ pub mod event_type {
 ///   from colliding; use a name you control
 /// - `data` crosses the bus; a binary `payload` does NOT (the bus is JSON) —
 ///   the platform forwards `payload_length` in its place so the drop is
-///   visible, and payloads remain valid wire-level for stage-to-stage use
+///   visible, and payloads remain valid wire-level for stage-to-stage use.
+///   `data` may be up to 64 KB of serialized JSON
+/// - the bus admits up to 1000 events per second from one stage, across all
+///   of its `ext.*` types. Past that, events are dropped for the rest of the
+///   second, and the platform logs the crossing once rather than each drop.
+///   The limit protects the platform from a runaway stage; it is not flow
+///   control. It clears per-sample streams up to 1 kHz (eye trackers, HID); a
+///   faster source should batch samples into fewer events. Events forwarded
+///   to a downstream stage through [`Capability::consumes`] never reach the
+///   bus and are not counted
 /// - the namespace is reserved to stages: plugin emits of `ext.*` are
 ///   rejected, so a subscriber can trust the source attribution
 /// - declare emitted types (or an `ext.<vendor>.*` glob) in

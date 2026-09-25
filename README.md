@@ -77,6 +77,9 @@ yours, under **`ext.<vendor>.<name>`**:
   event bus instead, where plugins subscribe.
 - Binary payloads ride along, so a frame source hands real bytes to the stage
   after it.
+- The bus admits up to 1000 of a stage's events per second, with up to 64 KB
+  of JSON `data` each. A sensor faster than that batches samples into fewer
+  events.
 - A type you consume that your upstream never emits fails when the pipeline
   starts, naming both stages — rather than leaving you waiting.
 
