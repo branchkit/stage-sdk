@@ -91,10 +91,12 @@ pub mod event_type {
 /// - prefer exactly three, `ext.<vendor>.<name>`. A subscription's `*` is
 ///   exactly one segment, so a plugin subscribed to `ext.<vendor>.*` receives
 ///   `ext.acme.gaze_point` but not `ext.acme.gaze.left_eye`; that one needs
-///   `ext.acme.*.*` or the exact name. Your own `ext.<vendor>.*` declaration
-///   in [`Capability::emits`] covers any depth, so a deeper name is legal;
-///   the platform warns when a stage emits one that the same glob, written
-///   as a subscription, would miss
+///   `ext.acme.**` (zero or more segments, so every depth under the vendor),
+///   `ext.acme.*.*`, or the exact name. Your own `ext.<vendor>.*`
+///   declaration in [`Capability::emits`] covers any depth (see
+///   [`declaration_covers`]), so a deeper name is legal; the platform warns
+///   when a stage emits one that the same glob, written as a subscription,
+///   would miss
 /// - `data` crosses the bus; a binary `payload` does NOT (the bus is JSON) —
 ///   the platform forwards `payload_length` in its place so the drop is
 ///   visible, and payloads remain valid wire-level for stage-to-stage use.
@@ -142,6 +144,84 @@ pub fn is_valid_ext_event_type(event_type: &str) -> bool {
     let has_two = segments.next().is_some_and(|s| !s.is_empty())
         && segments.next().is_some_and(|s| !s.is_empty());
     has_two && rest.split('.').all(|s| !s.is_empty())
+}
+
+/// Does one declared entry of a stage's [`Capability::emits`] or
+/// [`Capability::consumes`] cover `event_type`?
+///
+/// An entry is an exact type, or a pattern over dot-separated segments in
+/// which `*` stands for exactly one segment, whatever its text. One form is
+/// wider: a TRAILING `.*` covers one or more segments, so `ext.acme.*`
+/// declares every type under the vendor at any depth — `ext.acme.gaze` and
+/// `ext.acme.gaze.left_eye`, but not `ext.acme` itself and not
+/// `ext.acmeister.x`. Nothing else is a wildcard: `**`, or a `*` inside a
+/// segment (`gaze_*`), is literal text in a declaration.
+///
+/// This is the rule the platform applies to a running stage's declarations
+/// and the rule the conformance harness enforces, from this one function.
+///
+/// A subscriber's patterns are a different surface. There `*` is always
+/// exactly one segment, even at the end, and `**` is zero or more segments —
+/// so the subscription that receives everything `ext.acme.*` declares is
+/// `ext.acme.**`.
+pub fn declaration_covers(declared: &str, event_type: &str) -> bool {
+    if declared == event_type {
+        return true;
+    }
+    let (pattern, open_ended) = match declared.strip_suffix(".*") {
+        Some(prefix) => (prefix, true),
+        None => (declared, false),
+    };
+    let mut segments = event_type.split('.');
+    for want in pattern.split('.') {
+        match segments.next() {
+            Some(seg) if want == "*" || want == seg => {}
+            _ => return false,
+        }
+    }
+    // Open-ended: at least one segment below the prefix. Otherwise every
+    // segment was consumed, so the counts agree.
+    segments.next().is_some() == open_ended
+}
+
+#[cfg(test)]
+mod declaration_covers_tests {
+    use super::declaration_covers;
+
+    #[test]
+    fn a_trailing_glob_covers_every_depth_below_its_prefix() {
+        assert!(declaration_covers("ext.acme.*", "ext.acme.gaze_point"));
+        assert!(declaration_covers("ext.acme.*", "ext.acme.gaze.left_eye"));
+        assert!(declaration_covers("ext.acme.*", "ext.acme.a.b.c"));
+        // Not the prefix itself, and not a longer vendor name.
+        assert!(!declaration_covers("ext.acme.*", "ext.acme"));
+        assert!(!declaration_covers("ext.acme.*", "ext.acmeister.x"));
+    }
+
+    #[test]
+    fn a_star_anywhere_else_is_exactly_one_segment() {
+        assert!(declaration_covers("ext.*.gaze", "ext.acme.gaze"));
+        assert!(!declaration_covers("ext.*.gaze", "ext.acme.eye.gaze"));
+        assert!(declaration_covers("*", "transcript"));
+        assert!(!declaration_covers("*", "power.snapshot"));
+        // A trailing glob after a mid-pattern one still opens the end.
+        assert!(declaration_covers("ext.*.*", "ext.acme.gaze.left_eye"));
+        assert!(!declaration_covers("ext.*.*", "ext.acme"));
+    }
+
+    #[test]
+    fn exact_entries_and_literal_text() {
+        assert!(declaration_covers("transcript", "transcript"));
+        assert!(declaration_covers("power_snapshot", "power_snapshot"));
+        assert!(!declaration_covers("transcript", "transcript.final"));
+        // `**` and a within-segment `*` are literal text here.
+        assert!(!declaration_covers("ext.acme.**", "ext.acme.gaze"));
+        assert!(declaration_covers("ext.acme.**", "ext.acme.**"));
+        assert!(!declaration_covers(
+            "ext.acme.gaze_*",
+            "ext.acme.gaze_point"
+        ));
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

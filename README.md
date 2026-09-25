@@ -74,7 +74,9 @@ yours, under **`ext.<vendor>.<name>`**:
 - Declare what you emit in `Capability::emits`.
 - Prefer three-segment names. A plugin subscribing to `ext.<vendor>.*`
   receives `ext.acme.pedal` but not `ext.acme.pedal.left`: a subscription's
-  `*` is exactly one segment.
+  `*` is exactly one segment. `ext.<vendor>.**` receives every depth.
+  (Your own `ext.<vendor>.*` in `emits` covers every depth either way;
+  `events::declaration_covers` is that rule.)
 - Declare what you accept from the stage above you in `Capability::consumes`.
   A declared type is delivered to you; an undeclared one goes to the platform's
   event bus instead, where plugins subscribe.
