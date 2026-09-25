@@ -100,19 +100,37 @@ pub mod event_type {
 ///   visible, and payloads remain valid wire-level for stage-to-stage use.
 ///   `data` may be up to 64 KB of serialized JSON
 /// - the bus admits up to 1000 events per second from one stage, across all
-///   of its `ext.*` types. Past that, events are dropped for the rest of the
-///   second, and the platform logs the crossing once rather than each drop.
-///   The limit protects the platform from a runaway stage; it is not flow
-///   control. It clears per-sample streams up to 1 kHz (eye trackers, HID); a
-///   faster source should batch samples into fewer events. Events forwarded
-///   to a downstream stage through [`Capability::consumes`] never reach the
-///   bus and are not counted
+///   of its `ext.*` types ([`EXT_RATE_LIMIT_PER_SEC`]). Past that, events are
+///   dropped for the rest of the second, and the platform logs the crossing
+///   once rather than each drop. The limit protects the platform from a
+///   runaway stage; it is not flow control. It clears per-sample streams up
+///   to 1 kHz (eye trackers, HID); a faster source should batch samples into
+///   fewer events. Events forwarded to a downstream stage through
+///   [`Capability::consumes`] never reach the bus and are not counted
+/// - declare the rate of each steady stream in [`Capability::streams`]. The
+///   platform checks the declarations when the stage starts
+///   ([`Capability::check_streams`]) and refuses the stage, naming the stream
+///   and the limit, when they cannot be carried — so a rate problem is a
+///   start-up error you see once rather than drops you discover later. A
+///   stage whose streams stay within their declared rates never reaches the
+///   limit above
+/// - a stream that is STATE rather than a log of happenings (a gaze
+///   position, a pointer, a pedal's travel) can be declared
+///   [`Delivery::Latest`]: each subscriber then receives the newest value at
+///   the pace it can take, instead of every sample or a backlog of stale ones
 /// - the namespace is reserved to stages: plugin emits of `ext.*` are
 ///   rejected, so a subscriber can trust the source attribution
 /// - declare emitted types (or an `ext.<vendor>.*` glob) in
 ///   [`Capability::emits`]; the conformance harness enforces the declaration
 ///   and the platform logs undeclared emissions
 pub const EXT_EVENT_PREFIX: &str = "ext.";
+
+/// The most `ext.*` events per second the platform's bus admits from one
+/// stage, across all of its custom types.
+///
+/// It is also the budget [`Capability::streams`] is checked against: the
+/// declared rates of one stage's streams may add up to at most this.
+pub const EXT_RATE_LIMIT_PER_SEC: u32 = 1000;
 
 /// True when `event_type` is a well-formed custom event:
 /// `ext.<vendor>.<name>` with non-empty segments (more segments allowed).
@@ -152,7 +170,8 @@ impl AudioFormat {
 // landed. Call sites in this repo now all use the functional-update form, so
 // the next addition is free for them.
 //
-// It is NOT free for a third-party stage that spells every field out.
+// It is NOT free for a third-party stage that spells every field out: `streams`
+// broke that shape in 0.2.0, which is why the crate took a minor bump for it.
 // `#[non_exhaustive]` was tried here and reverted: it forbids struct
 // expressions cross-crate ENTIRELY (E0639) — `..Default::default()` does not
 // satisfy it — so it would force every stage author into
@@ -228,6 +247,266 @@ pub struct Capability {
     /// pre-existing stage.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accepts_config: Vec<String>,
+    /// The steady `ext.*` streams this stage emits onto the bus: for each,
+    /// the most events per second it will send and how subscribers receive
+    /// it (see `StreamDecl`).
+    ///
+    /// Declare a stream when it runs at a rate — a sensor sampling, a
+    /// position reporting. Occasional events need no declaration.
+    ///
+    /// The platform checks this list when the stage starts and refuses to
+    /// run a stage whose declarations it cannot carry — naming the stream and
+    /// the limit — rather than dropping its events later. Each stream must be
+    /// an exact type that `emits` covers, appear once, declare at least 1
+    /// event per second, and the declared rates of one stage add up to at
+    /// most 1000 per second (the Rust SDK's `Capability::check_streams` is
+    /// the rule, and the conformance harness runs it).
+    ///
+    /// Empty = no declarations, which is every pre-existing stage: its events
+    /// are delivered one by one under the shared limit, exactly as before.
+    /// The field is optional on the wire in both directions — a platform that
+    /// predates it ignores it and delivers every event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub streams: Vec<StreamDecl>,
+}
+
+/// How the platform delivers one declared stream to its subscribers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Delivery {
+    /// Every event reaches every subscriber, in order: a log of things that
+    /// happened (a blink, a key press, a recognized gesture). The default,
+    /// and how every undeclared event is delivered.
+    #[default]
+    Every,
+    /// State: each event carries the whole current value (a gaze position, a
+    /// pointer, a pedal's travel) in its `data`, and supersedes the one
+    /// before it. Each subscriber receives the newest value at the pace it
+    /// can take: a fast subscriber sees every sample, a slow one fewer and
+    /// newer — it skips to the newest rather than working through a backlog
+    /// of stale positions. Values of one stream arrive in order, never an
+    /// older after a newer; they are not ordered against other events, and a
+    /// newest value may arrive ahead of events emitted before it. A
+    /// subscriber is not replayed the value from before it subscribed; it
+    /// receives the next one.
+    Latest,
+}
+
+impl Delivery {
+    /// True for [`Delivery::Every`] — what an absent `delivery` means.
+    pub fn is_every(&self) -> bool {
+        matches!(self, Delivery::Every)
+    }
+}
+
+/// One steady `ext.*` stream a stage declares in [`Capability::streams`].
+///
+/// Build one with [`StreamDecl::every`] or [`StreamDecl::latest`]. The struct
+/// is `#[non_exhaustive]` so a later field (a burst allowance, say) does not
+/// break a stage that builds one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// The schema's description is the language-neutral half of the doc above: it
+// projects into the Go, TypeScript and Python ports, where the Rust
+// constructors and `#[non_exhaustive]` mean nothing.
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "One steady `ext.*` stream a stage declares in Capability.streams: its exact type, the most events per second it will emit, and how subscribers receive it."
+    )
+)]
+#[non_exhaustive]
+pub struct StreamDecl {
+    /// The exact custom event type, `ext.<vendor>.<name>` — not a glob. It
+    /// must also be covered by the stage's `emits`.
+    pub event_type: String,
+    /// The most events per second the stage will emit on this stream; at
+    /// least 1. Declare the sensor's real ceiling (a 250 Hz tracker declares
+    /// 250): the platform warns when a stream runs well past its declaration.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub rate_hz: u32,
+    /// How subscribers receive it. Absent = `every`.
+    #[serde(default, skip_serializing_if = "Delivery::is_every")]
+    pub delivery: Delivery,
+}
+
+impl StreamDecl {
+    /// A stream whose every event reaches every subscriber.
+    pub fn every(event_type: impl Into<String>, rate_hz: u32) -> Self {
+        StreamDecl {
+            event_type: event_type.into(),
+            rate_hz,
+            delivery: Delivery::Every,
+        }
+    }
+
+    /// A state stream: subscribers receive the newest value at their own
+    /// pace (see [`Delivery::Latest`]).
+    pub fn latest(event_type: impl Into<String>, rate_hz: u32) -> Self {
+        StreamDecl {
+            event_type: event_type.into(),
+            rate_hz,
+            delivery: Delivery::Latest,
+        }
+    }
+
+    /// The most events of this stream in one second before the platform
+    /// says it is running past its declaration: the declared rate plus a
+    /// tenth (at least one event). A sensor's clock drifts and an OS hands
+    /// over samples in small bursts, so a stream at exactly its declared rate
+    /// still lands a little over it in some seconds; that is not a stage
+    /// misdeclaring. The platform only advises past this — it drops nothing
+    /// until the per-stage limit — and the conformance harness fails a
+    /// stream that averages above it.
+    pub fn tolerated_per_second(&self) -> u32 {
+        self.rate_hz.saturating_add((self.rate_hz / 10).max(1))
+    }
+}
+
+/// Why the platform refuses a stream declaration — returned by
+/// [`Capability::check_streams`], and the text the platform logs when it
+/// refuses to run the stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamRefusal {
+    /// Not an exact, well-formed `ext.<vendor>.<name>` type. Globs name a
+    /// namespace, not a stream.
+    NotAStream { event_type: String },
+    /// Not covered by [`Capability::emits`].
+    NotEmitted { event_type: String },
+    /// Declared more than once.
+    Duplicate { event_type: String },
+    /// A declared rate of zero.
+    ZeroRate { event_type: String },
+    /// The stream does not fit in what is left of the stage's budget of
+    /// [`EXT_RATE_LIMIT_PER_SEC`] declared events per second.
+    OverBudget {
+        event_type: String,
+        rate_hz: u32,
+        /// What the streams declared before this one left over.
+        available: u32,
+        limit: u32,
+    },
+}
+
+impl std::fmt::Display for StreamRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StreamRefusal::NotAStream { event_type } => write!(
+                f,
+                "stream {event_type:?} is not an exact ext.<vendor>.<name> type \
+                 (a stream is one type; a glob belongs in emits)"
+            ),
+            StreamRefusal::NotEmitted { event_type } => write!(
+                f,
+                "stream {event_type:?} is not covered by the stage's emits — declare it there too"
+            ),
+            StreamRefusal::Duplicate { event_type } => {
+                write!(f, "stream {event_type:?} is declared more than once")
+            }
+            StreamRefusal::ZeroRate { event_type } => write!(
+                f,
+                "stream {event_type:?} declares a rate of 0 events/s; the least is 1"
+            ),
+            StreamRefusal::OverBudget {
+                event_type,
+                rate_hz,
+                available,
+                limit,
+            } => write!(
+                f,
+                "stream {event_type:?} declares {rate_hz} events/s, but one stage's streams \
+                 may declare at most {limit} events/s in total and {available} is left — \
+                 batch samples into fewer events, or sample a `latest` stream down to a \
+                 rate its subscribers can use"
+            ),
+        }
+    }
+}
+
+impl Capability {
+    /// Check [`Capability::streams`] against the rule the platform applies
+    /// when the stage starts. `Ok` = the platform admits every declaration;
+    /// otherwise every refusal, in declaration order. The platform refuses to
+    /// run a stage this returns `Err` for, and the conformance harness fails
+    /// it.
+    ///
+    /// Rates are budgeted in declaration order: a stream is refused when it
+    /// does not fit in what the streams before it left of
+    /// [`EXT_RATE_LIMIT_PER_SEC`].
+    pub fn check_streams(&self) -> Result<(), Vec<StreamRefusal>> {
+        let mut refusals = Vec::new();
+        let mut seen: Vec<&str> = Vec::new();
+        let mut declared_total: u32 = 0;
+        for s in &self.streams {
+            let event_type = s.event_type.clone();
+            if !is_valid_ext_event_type(&s.event_type) || s.event_type.split('.').any(|p| p == "*")
+            {
+                refusals.push(StreamRefusal::NotAStream { event_type });
+                continue;
+            }
+            if !self
+                .emits
+                .iter()
+                .any(|d| declaration_covers(d, &s.event_type))
+            {
+                refusals.push(StreamRefusal::NotEmitted { event_type });
+                continue;
+            }
+            if seen.contains(&s.event_type.as_str()) {
+                refusals.push(StreamRefusal::Duplicate { event_type });
+                continue;
+            }
+            seen.push(&s.event_type);
+            if s.rate_hz == 0 {
+                refusals.push(StreamRefusal::ZeroRate { event_type });
+                continue;
+            }
+            let available = EXT_RATE_LIMIT_PER_SEC.saturating_sub(declared_total);
+            if s.rate_hz > available {
+                refusals.push(StreamRefusal::OverBudget {
+                    event_type,
+                    rate_hz: s.rate_hz,
+                    available,
+                    limit: EXT_RATE_LIMIT_PER_SEC,
+                });
+                continue;
+            }
+            declared_total += s.rate_hz;
+        }
+        if refusals.is_empty() {
+            Ok(())
+        } else {
+            Err(refusals)
+        }
+    }
+}
+
+/// Does an `emits` entry cover `event_type`? The stage declaration rule: `*`
+/// is exactly one dot-separated segment, and a trailing `.*` covers one or
+/// more segments, so `ext.acme.*` declares every type under the vendor at any
+/// depth. The platform and the conformance harness hold their own copies of
+/// this rule to one shared table of cases.
+fn declaration_covers(declared: &str, event_type: &str) -> bool {
+    if declared == event_type {
+        return true;
+    }
+    let (pattern, open_ended) = match declared.strip_suffix(".*") {
+        Some(prefix) => (prefix, true),
+        None => (declared, false),
+    };
+    let mut segments = event_type.split('.');
+    for want in pattern.split('.') {
+        match segments.next() {
+            Some(seg) if want == "*" || want == seg => {}
+            _ => return false,
+        }
+    }
+    // Open-ended: at least one segment below the prefix. Otherwise the
+    // segment counts must agree.
+    segments.next().is_some() == open_ended
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -608,6 +887,221 @@ mod tests {
             v["emits"],
             serde_json::json!(["power_snapshot", "ext.acme.*"])
         );
+    }
+
+    fn gaze_cap(streams: Vec<StreamDecl>) -> Capability {
+        Capability {
+            stage_type: "sensor".into(),
+            stage_name: "gaze".into(),
+            lifecycle_modes: vec!["persistent".into()],
+            emits: vec!["ext.acme.*".into()],
+            streams,
+            ..Default::default()
+        }
+    }
+
+    /// Wire compatibility, both directions: a stage that declares no streams
+    /// serializes exactly as before the field existed, and a capability from
+    /// such a stage (no `streams` key) decodes to an empty list.
+    #[test]
+    fn capability_without_streams_is_unchanged_on_the_wire() {
+        let cap = gaze_cap(vec![]);
+        let v = serde_json::to_value(&cap).unwrap();
+        assert!(v.get("streams").is_none(), "empty streams must be omitted");
+        let old: Capability = serde_json::from_value(serde_json::json!({
+            "stage_type": "sensor",
+            "stage_name": "gaze",
+            "lifecycle_modes": ["persistent"],
+            "emits": ["ext.acme.*"],
+        }))
+        .unwrap();
+        assert!(old.streams.is_empty());
+    }
+
+    #[test]
+    fn stream_decl_wire_shape() {
+        let cap = gaze_cap(vec![
+            StreamDecl::latest("ext.acme.gaze_point", 250),
+            StreamDecl::every("ext.acme.blink", 20),
+        ]);
+        let v = serde_json::to_value(&cap).unwrap();
+        assert_eq!(
+            v["streams"],
+            serde_json::json!([
+                {"event_type": "ext.acme.gaze_point", "rate_hz": 250, "delivery": "latest"},
+                // `every` is the default and is left off the wire.
+                {"event_type": "ext.acme.blink", "rate_hz": 20},
+            ])
+        );
+        let back: Capability = serde_json::from_value(v).unwrap();
+        assert_eq!(back.streams, cap.streams);
+        assert_eq!(back.streams[1].delivery, Delivery::Every);
+    }
+
+    /// A delivery mode this SDK does not know is a decode error that names
+    /// the modes it does — which the platform reports when it refuses the
+    /// stage — never a silent fallback to another mode.
+    #[test]
+    fn unknown_delivery_mode_does_not_decode() {
+        let err = serde_json::from_value::<StreamDecl>(serde_json::json!({
+            "event_type": "ext.acme.gaze_point", "rate_hz": 250, "delivery": "sampled"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("sampled") && err.contains("latest"),
+            "error should name the mode and the known ones: {err}"
+        );
+    }
+
+    /// The acceptance shape: a 250 Hz gaze stream, as state, beside an
+    /// every-event stream, fits.
+    #[test]
+    fn a_250hz_latest_stream_is_admitted() {
+        let cap = gaze_cap(vec![
+            StreamDecl::latest("ext.acme.gaze_point", 250),
+            StreamDecl::every("ext.acme.blink", 20),
+        ]);
+        assert_eq!(cap.check_streams(), Ok(()));
+        // No streams at all: trivially admitted.
+        assert_eq!(gaze_cap(vec![]).check_streams(), Ok(()));
+    }
+
+    #[test]
+    fn a_stream_over_the_limit_is_refused_naming_it_and_the_limit() {
+        let cap = gaze_cap(vec![StreamDecl::every("ext.acme.emg", 1200)]);
+        let refusals = cap.check_streams().unwrap_err();
+        assert_eq!(
+            refusals,
+            vec![StreamRefusal::OverBudget {
+                event_type: "ext.acme.emg".into(),
+                rate_hz: 1200,
+                available: EXT_RATE_LIMIT_PER_SEC,
+                limit: EXT_RATE_LIMIT_PER_SEC,
+            }]
+        );
+        let text = refusals[0].to_string();
+        assert!(
+            text.contains("ext.acme.emg") && text.contains("1200") && text.contains("1000"),
+            "{text}"
+        );
+    }
+
+    /// The budget is the stage's, spent in declaration order: two streams
+    /// that each fit alone do not fit together, and the one that overflows
+    /// is the one named.
+    #[test]
+    fn declared_rates_share_one_budget() {
+        let cap = gaze_cap(vec![
+            StreamDecl::latest("ext.acme.gaze_point", 600),
+            StreamDecl::every("ext.acme.emg", 600),
+            StreamDecl::every("ext.acme.blink", 400),
+        ]);
+        assert_eq!(
+            cap.check_streams().unwrap_err(),
+            vec![StreamRefusal::OverBudget {
+                event_type: "ext.acme.emg".into(),
+                rate_hz: 600,
+                available: 400,
+                limit: EXT_RATE_LIMIT_PER_SEC,
+            }],
+            "blink still fits in what gaze left"
+        );
+        let exact = gaze_cap(vec![
+            StreamDecl::latest("ext.acme.gaze_point", 600),
+            StreamDecl::every("ext.acme.emg", 400),
+        ]);
+        assert_eq!(
+            exact.check_streams(),
+            Ok(()),
+            "the limit itself is admitted"
+        );
+    }
+
+    #[test]
+    fn malformed_declarations_are_refused() {
+        let mut cap = gaze_cap(vec![
+            StreamDecl::every("ext.acme.*", 10),
+            StreamDecl::every("ext.acme", 10),
+            StreamDecl::every("ext.other.tick", 10),
+            StreamDecl::every("ext.acme.tick", 0),
+            StreamDecl::every("ext.acme.pos", 10),
+            StreamDecl::latest("ext.acme.pos", 10),
+        ]);
+        let got = cap.check_streams().unwrap_err();
+        assert_eq!(
+            got,
+            vec![
+                StreamRefusal::NotAStream {
+                    event_type: "ext.acme.*".into()
+                },
+                StreamRefusal::NotAStream {
+                    event_type: "ext.acme".into()
+                },
+                StreamRefusal::NotEmitted {
+                    event_type: "ext.other.tick".into()
+                },
+                StreamRefusal::ZeroRate {
+                    event_type: "ext.acme.tick".into()
+                },
+                StreamRefusal::Duplicate {
+                    event_type: "ext.acme.pos".into()
+                },
+            ]
+        );
+        // A stage that declares no emits covers nothing.
+        cap.emits.clear();
+        cap.streams = vec![StreamDecl::every("ext.acme.pos", 10)];
+        assert_eq!(
+            cap.check_streams().unwrap_err(),
+            vec![StreamRefusal::NotEmitted {
+                event_type: "ext.acme.pos".into()
+            }]
+        );
+    }
+
+    /// The `streams` field doc projects into every port without Rust links,
+    /// so it states the limit as a number; it must be this crate's number.
+    #[test]
+    fn streams_doc_states_the_limit() {
+        let src = include_str!("events.rs");
+        let stated = format!("most {EXT_RATE_LIMIT_PER_SEC} per second");
+        assert!(
+            src.contains(&stated),
+            "Capability::streams must say {stated:?}"
+        );
+    }
+
+    #[test]
+    fn tolerance_is_a_tenth_and_at_least_one() {
+        assert_eq!(
+            StreamDecl::latest("ext.acme.gaze_point", 250).tolerated_per_second(),
+            275
+        );
+        assert_eq!(
+            StreamDecl::every("ext.acme.tick", 100).tolerated_per_second(),
+            110
+        );
+        assert_eq!(
+            StreamDecl::every("ext.acme.slow", 5).tolerated_per_second(),
+            6
+        );
+        assert_eq!(
+            StreamDecl::every("ext.acme.x", u32::MAX).tolerated_per_second(),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn emits_coverage_follows_the_stage_declaration_rule() {
+        assert!(declaration_covers("ext.acme.pos", "ext.acme.pos"));
+        assert!(declaration_covers("ext.acme.*", "ext.acme.pos"));
+        assert!(declaration_covers("ext.acme.*", "ext.acme.gaze.left_eye"));
+        assert!(declaration_covers("ext.*.pos", "ext.acme.pos"));
+        assert!(!declaration_covers("ext.*.pos", "ext.acme.gaze.pos"));
+        assert!(!declaration_covers("ext.acme.*", "ext.acme"));
+        assert!(!declaration_covers("ext.acme.*", "ext.acmeister.pos"));
+        assert!(!declaration_covers("ext.acme.pos", "ext.acme.pose"));
     }
 
     #[test]

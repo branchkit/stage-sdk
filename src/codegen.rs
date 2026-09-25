@@ -83,7 +83,9 @@ impl Tier {
 /// The tier a generated type belongs to.
 pub fn tier_of_type(name: &str) -> Tier {
     match name {
-        "WireHeader" | "Capability" | "ErrorEvent" | "FlowCredit" => Tier::Core,
+        "WireHeader" | "Capability" | "StreamDecl" | "Delivery" | "ErrorEvent" | "FlowCredit" => {
+            Tier::Core
+        }
         "AudioStart" | "AudioChunk" | "AudioStop" | "AudioFormat" => Tier::Audio,
         "Transcript" | "VocabularyUpdate" | "GrammarDagWire" | "WireArc" | "OpenState" => {
             Tier::Recognition
@@ -170,7 +172,32 @@ fn base_type(schema: &Value) -> Option<&str> {
 
 /// A schema of literal `true` (or an untyped object) accepts anything.
 fn is_any(schema: &Value) -> bool {
-    schema == &Value::Bool(true) || (schema.get("type").is_none() && ref_name(schema).is_none())
+    schema == &Value::Bool(true)
+        || (schema.get("type").is_none()
+            && ref_name(schema).is_none()
+            && string_enum(schema).is_none())
+}
+
+/// The members of a closed string vocabulary, with each one's doc: a Rust
+/// unit-variant enum. schemars writes one as `"enum": [...]` when no variant
+/// is documented and as `"oneOf": [{"const": ...}]` when one is, so both
+/// spellings are read. `None` for anything else.
+fn string_enum(schema: &Value) -> Option<Vec<(&str, Option<&str>)>> {
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        return values
+            .iter()
+            .map(|v| v.as_str().map(|s| (s, None)))
+            .collect();
+    }
+    let variants = schema.get("oneOf").and_then(Value::as_array)?;
+    variants
+        .iter()
+        .map(|v| {
+            v.get("const")
+                .and_then(Value::as_str)
+                .map(|s| (s, description(v)))
+        })
+        .collect()
 }
 
 /// Go import path of the root package, for qualifying cross-tier references.
@@ -470,6 +497,19 @@ pub fn go_source(doc: &Value, tier: Tier) -> String {
         if let Some(d) = description(schema) {
             out.push_str(&doc_lines(d, "//", ""));
         }
+        if let Some(members) = string_enum(schema) {
+            // Go has no literal types: a named string plus one constant per
+            // member, so a typo is a compile error at the use site.
+            out.push_str(&format!("type {name} string\n\nconst (\n"));
+            for (value, doc) in members {
+                if let Some(d) = doc {
+                    out.push_str(&doc_lines(d, "//", "\t"));
+                }
+                out.push_str(&format!("\t{name}{} {name} = {value:?}\n", pascal(value)));
+            }
+            out.push_str(")\n\n");
+            continue;
+        }
         out.push_str(&format!("type {name} struct {{\n"));
         for (fname, fschema, required) in fields(schema) {
             if let Some(d) = description(fschema) {
@@ -581,6 +621,26 @@ pub fn ts_source(doc: &Value, tier: Tier) -> String {
             out.push_str(&doc_lines(d, " *", ""));
             out.push_str(" */\n");
         }
+        if let Some(members) = string_enum(schema) {
+            // A union of literals, so the checker rejects a misspelled
+            // member, plus one constant per member (the Go port's names), so
+            // each member has somewhere to carry its doc.
+            let union: Vec<String> = members.iter().map(|(v, _)| format!("{v:?}")).collect();
+            out.push_str(&format!("export type {name} = {};\n", union.join(" | ")));
+            for (value, doc) in members {
+                if let Some(d) = doc {
+                    out.push_str("/**\n");
+                    out.push_str(&doc_lines(d, " *", ""));
+                    out.push_str(" */\n");
+                }
+                out.push_str(&format!(
+                    "export const {name}{}: {name} = {value:?};\n",
+                    pascal(value)
+                ));
+            }
+            out.push('\n');
+            continue;
+        }
         out.push_str(&format!("export interface {name} {{\n"));
         for (fname, fschema, required) in fields(schema) {
             if let Some(d) = description(fschema) {
@@ -609,7 +669,16 @@ pub fn py_source(doc: &Value, tier: Tier) -> String {
     let mut out = String::from(PY_HEADER);
     out.push_str(&format!("#\n# {}\n\n", tier.blurb().replace("// ", "# ")));
 
-    out.push_str("from typing import Any, NotRequired, TypedDict\n");
+    // `Literal` only where a closed string vocabulary needs it: an unused
+    // import in a generated module is lint noise in every consumer.
+    let has_enum = schemas(doc)
+        .into_iter()
+        .any(|(name, schema)| tier_of_type(name) == tier && string_enum(schema).is_some());
+    if has_enum {
+        out.push_str("from typing import Any, Literal, NotRequired, TypedDict\n");
+    } else {
+        out.push_str("from typing import Any, NotRequired, TypedDict\n");
+    }
     let cross = cross_tier_refs(doc, tier);
     if !cross.is_empty() {
         let mut by_module: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -692,6 +761,25 @@ DATA_DIR_ENV = {:?}
         }
         if let Some(d) = description(schema) {
             out.push_str(&doc_lines(d, "#", ""));
+        }
+        if let Some(members) = string_enum(schema) {
+            // A `Literal` alias, so a type checker rejects a misspelled
+            // member, plus one constant per member (the Go port's names in
+            // Python's case), so each member has somewhere to carry its doc.
+            let union: Vec<String> = members.iter().map(|(v, _)| format!("{v:?}")).collect();
+            out.push_str(&format!("{name} = Literal[{}]\n", union.join(", ")));
+            for (value, doc) in members {
+                if let Some(d) = doc {
+                    out.push_str(&doc_lines(d, "#", ""));
+                }
+                out.push_str(&format!(
+                    "{}_{}: {name} = {value:?}\n",
+                    name.to_string().to_uppercase_snake(),
+                    value.to_uppercase()
+                ));
+            }
+            out.push_str("\n");
+            continue;
         }
         out.push_str(&format!("{name} = TypedDict(\"{name}\", {{\n"));
         for (fname, fschema, required) in fields(schema) {

@@ -20,7 +20,7 @@ Or by hand:
 
 ```toml
 [dependencies]
-branchkit-stage-sdk = "0.1"
+branchkit-stage-sdk = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -83,11 +83,40 @@ yours, under **`ext.<vendor>.<name>`**:
 - The bus admits up to 1000 of a stage's events per second, with up to 64 KB
   of JSON `data` each. A sensor faster than that batches samples into fewer
   events.
+- Declare each steady stream's rate in `Capability::streams`. The platform
+  checks the declarations when your stage starts and refuses to run it —
+  naming the stream and the limit — if it cannot carry them, rather than
+  dropping events later. `Capability::check_streams` is that check; the
+  conformance harness runs it too.
+- A stream that is *state* — a gaze position, a pointer, a pedal's travel —
+  can be declared `latest`: each subscriber gets the newest value at the pace
+  it can take, instead of every sample or a backlog of stale ones. Put the
+  whole value in each event's `data`. Things that *happen* (a blink, a key)
+  keep the default, `every`.
 - A type you consume that your upstream never emits fails when the pipeline
   starts, naming both stages — rather than leaving you waiting.
 
 The platform never decodes these. Two stages agree on a format between
 themselves, and the platform routes bytes.
+
+A stage with steady streams declares them:
+
+```rust
+use branchkit_stage_sdk::events::StreamDecl;
+
+let cap = Capability {
+    emits: vec!["ext.acme.*".into()],
+    streams: vec![
+        StreamDecl::latest("ext.acme.gaze_point", 250),
+        StreamDecl::every("ext.acme.blink", 5),
+    ],
+    // ...
+    ..Default::default()
+};
+```
+
+`examples/gaze.rs` is a complete one. A platform that predates `streams`
+ignores the field and delivers every event, so declaring is always safe.
 
 ## Flow credit: which side are you on
 
@@ -110,7 +139,9 @@ cargo run -p branchkit-stage-sdk-test -- ./target/debug/my_stage
 It checks the handshake, drives a credit-accounted session as a true sender
 (so a stage whose grants trail its cadence starves and fails), verifies
 unknown-event leniency and error-path termination, and validates every byte you
-emit against the strict framing rules.
+emit against the strict framing rules. A source stage's declared streams are
+checked with the platform's own start-up rule and held to their declared
+rates.
 
 ## Shipping it
 
