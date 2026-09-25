@@ -88,6 +88,13 @@ pub mod event_type {
 /// - at least three non-empty dot segments (`ext.` alone or `ext.foo` is
 ///   invalid) — the vendor segment is what keeps two stages' vocabularies
 ///   from colliding; use a name you control
+/// - prefer exactly three, `ext.<vendor>.<name>`. A subscription's `*` is
+///   exactly one segment, so a plugin subscribed to `ext.<vendor>.*` receives
+///   `ext.acme.gaze_point` but not `ext.acme.gaze.left_eye`; that one needs
+///   `ext.acme.*.*` or the exact name. Your own `ext.<vendor>.*` declaration
+///   in [`Capability::emits`] covers any depth, so a deeper name is legal;
+///   the platform warns when a stage emits one that the same glob, written
+///   as a subscription, would miss
 /// - `data` crosses the bus; a binary `payload` does NOT (the bus is JSON) —
 ///   the platform forwards `payload_length` in its place so the drop is
 ///   visible, and payloads remain valid wire-level for stage-to-stage use.
@@ -163,7 +170,8 @@ pub struct Capability {
     pub feature_flags: serde_json::Map<String, serde_json::Value>,
     /// Event types this stage emits — built-in tags (`transcript`,
     /// `power_snapshot`, …) and/or custom types under [`EXT_EVENT_PREFIX`]
-    /// (an `ext.<vendor>.*` glob covers a vendor namespace). Advisory at
+    /// (an `ext.<vendor>.*` glob covers every type under the vendor, at any
+    /// depth; a `*` elsewhere is exactly one segment). Advisory at
     /// runtime (the platform logs undeclared `ext.*` emissions rather than
     /// dropping them); enforced by the conformance harness. Empty = the
     /// stage declares nothing (pre-existing stages).
