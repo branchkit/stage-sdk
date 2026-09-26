@@ -98,8 +98,9 @@ pub mod event_type {
 ///   when a stage emits one that the same glob, written as a subscription,
 ///   would miss
 /// - `data` crosses the bus; a binary `payload` does NOT (the bus is JSON) —
-///   the platform forwards `payload_length` in its place so the drop is
-///   visible, and payloads remain valid wire-level for stage-to-stage use.
+///   the platform stamps its length into `data` as `_payload_length` so the
+///   drop is visible, and payloads remain valid wire-level for stage-to-stage
+///   use.
 ///   `data` may be up to 64 KB of serialized JSON
 /// - the bus admits up to 1000 events per second from one stage, across all
 ///   of its `ext.*` types ([`EXT_RATE_LIMIT_PER_SEC`]). Past that, events are
