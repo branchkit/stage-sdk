@@ -564,31 +564,6 @@ impl Capability {
     }
 }
 
-/// Does an `emits` entry cover `event_type`? The stage declaration rule: `*`
-/// is exactly one dot-separated segment, and a trailing `.*` covers one or
-/// more segments, so `ext.acme.*` declares every type under the vendor at any
-/// depth. The platform and the conformance harness hold their own copies of
-/// this rule to one shared table of cases.
-fn declaration_covers(declared: &str, event_type: &str) -> bool {
-    if declared == event_type {
-        return true;
-    }
-    let (pattern, open_ended) = match declared.strip_suffix(".*") {
-        Some(prefix) => (prefix, true),
-        None => (declared, false),
-    };
-    let mut segments = event_type.split('.');
-    for want in pattern.split('.') {
-        match segments.next() {
-            Some(seg) if want == "*" || want == seg => {}
-            _ => return false,
-        }
-    }
-    // Open-ended: at least one segment below the prefix. Otherwise the
-    // segment counts must agree.
-    segments.next().is_some() == open_ended
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AudioStart {
