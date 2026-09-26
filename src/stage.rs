@@ -343,8 +343,20 @@ pub async fn serve_audio_consumer_on<C: AudioConsumer>(
     }
 }
 
-/// Options for [`serve_source`].
+/// Options for [`serve_source`]. `SourceOptions::default()` is every option
+/// off; turn one on with its setter:
+///
+/// ```
+/// use branchkit_stage_sdk::stage::SourceOptions;
+///
+/// let opts = SourceOptions::new().listen_for_stop(true);
+/// assert!(opts.listen_for_stop);
+/// ```
+///
+/// `#[non_exhaustive]`, like [`crate::events::Capability`], so the next
+/// option is not a breaking change for a stage that sets this one.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct SourceOptions {
     /// Listen on stdin for the platform's stop request and stop when it
     /// arrives (or on EOF, which means the platform is gone).
@@ -360,6 +372,22 @@ pub struct SourceOptions {
     /// today, and turning that on for them would be a behavior change rather
     /// than an extraction.
     pub listen_for_stop: bool,
+}
+
+impl SourceOptions {
+    /// Every option off — the same as `SourceOptions::default()`, usable in
+    /// a `const`.
+    pub const fn new() -> Self {
+        SourceOptions {
+            listen_for_stop: false,
+        }
+    }
+
+    /// Set [`SourceOptions::listen_for_stop`](#structfield.listen_for_stop).
+    pub const fn listen_for_stop(mut self, on: bool) -> Self {
+        self.listen_for_stop = on;
+        self
+    }
 }
 
 /// A running source stage's handle: the outbound writer plus the stop signal.

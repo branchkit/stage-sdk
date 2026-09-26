@@ -23,6 +23,33 @@
 //!
 //! The conformance harness in `branchkit/stage-sdk-test` is the acceptance
 //! bar for a stage built against this crate.
+//!
+//! ## Which structs can grow
+//!
+//! The values a stage *declares* are `#[non_exhaustive]` and built through
+//! constructors, so a field added in a later release breaks no stage:
+//! [`events::Capability`] ([`events::Capability::new`] and its setters),
+//! [`events::StreamDecl`] ([`events::StreamDecl::every`] /
+//! [`events::StreamDecl::latest`]) and [`stage::SourceOptions`]
+//! ([`stage::SourceOptions::new`]). These are where new platform features
+//! arrive, so they are closed now, once, rather than each time one does.
+//!
+//! The rest stay open to struct literals, deliberately:
+//!
+//! - The event payloads in [`events`] (`AudioStart`, `Transcript`, the device,
+//!   location, display and power families) and the [`grammar_dag`] wire types
+//!   are the wire vocabulary itself, mirrored field for field in the published
+//!   pipeline contract and the Go, TypeScript and Python ports. A field is
+//!   added to one as an optional wire field with a crate version bump, so
+//!   decoding never breaks; and a stage that builds a payload is writing that
+//!   wire shape field by field on purpose.
+//! - [`events::AudioFormat`] is a complete value — sample rate, sample width,
+//!   channel count describe a PCM layout — and is used in constants such as
+//!   [`events::AudioFormat::PCM_16K_MONO`].
+//! - [`stage::CreditPolicy`] is four numbers that are the receiver's half of
+//!   the credit protocol, written as a `const` at the top of a stage. Another
+//!   knob would be a change to the protocol, which every consuming stage has
+//!   to take on knowingly.
 
 #[cfg(feature = "schema")]
 pub mod codegen;

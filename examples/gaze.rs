@@ -38,17 +38,11 @@ async fn main() {
 }
 
 async fn run() -> Result {
-    let cap = Capability {
-        stage_type: "sensor".into(),
-        stage_name: "gaze".into(),
-        lifecycle_modes: vec!["persistent".into()],
-        emits: vec!["ext.example.*".into()],
-        streams: vec![
-            StreamDecl::latest("ext.example.gaze_point", GAZE_HZ),
-            StreamDecl::every("ext.example.blink", 2),
-        ],
-        ..Default::default()
-    };
+    let cap = Capability::new("sensor", "gaze")
+        .persistent()
+        .emits(["ext.example.*"])
+        .stream(StreamDecl::latest("ext.example.gaze_point", GAZE_HZ))
+        .stream(StreamDecl::every("ext.example.blink", 2));
 
     stage::serve_source(cap, SourceOptions::default(), |mut ctx| async move {
         let mut tick = tokio::time::interval(Duration::from_secs(1) / GAZE_HZ);

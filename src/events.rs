@@ -242,23 +242,38 @@ impl AudioFormat {
     };
 }
 
+/// What a stage tells the platform about itself in its handshake: what it is,
+/// how it runs, and the events it emits, consumes and accepts as config.
+///
+/// Build one with [`Capability::new`] and the chained setters below:
+///
+/// ```
+/// use branchkit_stage_sdk::events::{Capability, StreamDecl};
+///
+/// let cap = Capability::new("sensor", "gaze")
+///     .persistent()
+///     .emits(["ext.acme.*"])
+///     .stream(StreamDecl::latest("ext.acme.gaze_point", 250));
+/// assert_eq!(cap.emits, ["ext.acme.*"]);
+/// ```
+///
+/// The struct is `#[non_exhaustive]`, so a field added later is not a
+/// breaking change for any stage: outside this crate it cannot be written as
+/// a struct literal (not even with `..Default::default()`), only built
+/// through `new` and the setters, or `Capability::default()` plus field
+/// assignment. Every field stays public to read and to change.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-// NOTE for whoever adds the next field: this breaks every stage that builds a
-// `Capability` with a struct literal and does not end it in
-// `..Default::default()` — `accepts_config` broke nineteen sites the day it
-// landed. Call sites in this repo now all use the functional-update form, so
-// the next addition is free for them.
-//
-// It is NOT free for a third-party stage that spells every field out: `streams`
-// broke that shape in 0.2.0, which is why the crate took a minor bump for it.
-// `#[non_exhaustive]` was tried here and reverted: it forbids struct
-// expressions cross-crate ENTIRELY (E0639) — `..Default::default()` does not
-// satisfy it — so it would force every stage author into
-// `Capability::default()` plus field assignment. Doing it properly means
-// shipping a constructor or builder first, which is a deliberate API task and
-// should not ride along with a field addition. Pre-launch is the moment to do
-// it if it is going to happen.
+// The schema's description is the language-neutral half of the doc above:
+// the builder and `#[non_exhaustive]` are Rust's, and it projects into the
+// Go, TypeScript and Python ports.
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "What a stage declares about itself in its handshake: what it is, how it runs, and the events it emits, consumes and accepts as configuration."
+    )
+)]
+#[non_exhaustive]
 pub struct Capability {
     pub stage_type: String,
     pub stage_name: String,
@@ -503,6 +518,97 @@ impl std::fmt::Display for StreamRefusal {
                  rate its subscribers can use"
             ),
         }
+    }
+}
+
+impl Capability {
+    /// A capability for a stage of `stage_type` named `stage_name`, declaring
+    /// nothing else yet. Add a lifecycle mode ([`Capability::persistent`] or
+    /// [`Capability::per_run`]) — the platform needs at least one — and what
+    /// the stage emits.
+    pub fn new(stage_type: impl Into<String>, stage_name: impl Into<String>) -> Self {
+        Capability {
+            stage_type: stage_type.into(),
+            stage_name: stage_name.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Add a lifecycle mode by name. [`Capability::persistent`] and
+    /// [`Capability::per_run`] name the two the platform runs today.
+    pub fn lifecycle_mode(mut self, mode: impl Into<String>) -> Self {
+        self.lifecycle_modes.push(mode.into());
+        self
+    }
+
+    /// The stage runs for as long as its pipeline does.
+    pub fn persistent(self) -> Self {
+        self.lifecycle_mode("persistent")
+    }
+
+    /// The stage runs for one session and then exits.
+    pub fn per_run(self) -> Self {
+        self.lifecycle_mode("per_run")
+    }
+
+    /// Add an audio format the stage accepts or produces.
+    pub fn audio_format(mut self, format: AudioFormat) -> Self {
+        self.audio_formats.push(format);
+        self
+    }
+
+    /// Set one feature flag.
+    pub fn feature_flag(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
+        self.feature_flags.insert(name.into(), value.into());
+        self
+    }
+
+    /// Add event types (or `ext.<vendor>.*` globs) to
+    /// [`Capability::emits`].
+    pub fn emits<I, S>(mut self, types: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.emits.extend(types.into_iter().map(Into::into));
+        self
+    }
+
+    /// Add custom event types to [`Capability::consumes`].
+    pub fn consumes<I, S>(mut self, types: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.consumes.extend(types.into_iter().map(Into::into));
+        self
+    }
+
+    /// Add custom event types to [`Capability::accepts_config`].
+    pub fn accepts_config<I, S>(mut self, types: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.accepts_config
+            .extend(types.into_iter().map(Into::into));
+        self
+    }
+
+    /// Declare one steady stream in [`Capability::streams`].
+    pub fn stream(mut self, stream: StreamDecl) -> Self {
+        self.streams.push(stream);
+        self
+    }
+
+    /// Declare several steady streams in [`Capability::streams`].
+    pub fn streams(mut self, streams: impl IntoIterator<Item = StreamDecl>) -> Self {
+        self.streams.extend(streams);
+        self
     }
 }
 
@@ -945,14 +1051,43 @@ mod tests {
     }
 
     fn gaze_cap(streams: Vec<StreamDecl>) -> Capability {
-        Capability {
-            stage_type: "sensor".into(),
-            stage_name: "gaze".into(),
-            lifecycle_modes: vec!["persistent".into()],
-            emits: vec!["ext.acme.*".into()],
-            streams,
-            ..Default::default()
-        }
+        Capability::new("sensor", "gaze")
+            .persistent()
+            .emits(["ext.acme.*"])
+            .streams(streams)
+    }
+
+    /// The builder sets exactly what a struct literal would, and its list
+    /// setters add to what is there rather than replacing it.
+    #[test]
+    fn the_builder_sets_every_field() {
+        let cap = Capability::new("sensor", "gaze")
+            .persistent()
+            .per_run()
+            .audio_format(AudioFormat::PCM_16K_MONO)
+            .feature_flag("fast", true)
+            .emits(["ext.acme.a"])
+            .emits(vec![String::from("ext.acme.b")])
+            .consumes(["ext.up.frame"])
+            .accepts_config(["ext.acme.config"])
+            .stream(StreamDecl::latest("ext.acme.a", 250))
+            .streams([StreamDecl::every("ext.acme.b", 5)]);
+        assert_eq!(cap.stage_type, "sensor");
+        assert_eq!(cap.stage_name, "gaze");
+        assert_eq!(cap.lifecycle_modes, ["persistent", "per_run"]);
+        assert_eq!(cap.audio_formats, [AudioFormat::PCM_16K_MONO]);
+        assert_eq!(cap.feature_flags["fast"], serde_json::json!(true));
+        assert_eq!(cap.emits, ["ext.acme.a", "ext.acme.b"]);
+        assert_eq!(cap.consumes, ["ext.up.frame"]);
+        assert_eq!(cap.accepts_config, ["ext.acme.config"]);
+        assert_eq!(
+            cap.streams,
+            [
+                StreamDecl::latest("ext.acme.a", 250),
+                StreamDecl::every("ext.acme.b", 5)
+            ]
+        );
+        assert!(cap.check_streams().is_ok());
     }
 
     /// Wire compatibility, both directions: a stage that declares no streams

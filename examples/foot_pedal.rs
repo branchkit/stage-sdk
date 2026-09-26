@@ -25,13 +25,9 @@ async fn main() {
 async fn run() -> Result {
     // `emits` is the vendor namespace this stage owns. The platform routes
     // these without decoding them — it never learns what a pedal is.
-    let cap = Capability {
-        stage_type: "sensor".into(),
-        stage_name: "foot_pedal".into(),
-        lifecycle_modes: vec!["persistent".into()],
-        emits: vec!["ext.example.pedal.*".into()],
-        ..Default::default()
-    };
+    let cap = Capability::new("sensor", "foot_pedal")
+        .persistent()
+        .emits(["ext.example.pedal.*"]);
 
     stage::serve_source(cap, SourceOptions::default(), |mut ctx| async move {
         // A real stage would wait on its device here. This one simulates a

@@ -28,6 +28,12 @@ A stage is a `tokio` binary, so you bring your own runtime. The `schema`
 feature is for regenerating the platform's pipeline schema and is not
 something a stage enables.
 
+**Coming from 0.1:** build a `Capability` with `Capability::new(type, name)`
+and its setters (`.persistent()`, `.emits([...])`, `.stream(...)`, …), and
+`SourceOptions` with `SourceOptions::new().listen_for_stop(true)`. Both are
+`#[non_exhaustive]` from 0.2, so a struct literal no longer compiles, and a
+field added in a later release will not break your stage.
+
 ## Two shapes
 
 ```rust
@@ -40,13 +46,9 @@ async fn main() {
 }
 
 async fn run() -> Result {
-    let cap = Capability {
-        stage_type: "monitor".into(),
-        stage_name: "pedal".into(),
-        lifecycle_modes: vec!["persistent".into()],
-        emits: vec!["ext.acme.pedal".into()],
-        ..Default::default()
-    };
+    let cap = Capability::new("monitor", "pedal")
+        .persistent()
+        .emits(["ext.acme.pedal"]);
 
     stage::serve_source(cap, SourceOptions::default(), |mut ctx| async move {
         while !ctx.stopped() {
@@ -106,15 +108,11 @@ A stage with steady streams declares them:
 ```rust
 use branchkit_stage_sdk::events::StreamDecl;
 
-let cap = Capability {
-    emits: vec!["ext.acme.*".into()],
-    streams: vec![
-        StreamDecl::latest("ext.acme.gaze_point", 250),
-        StreamDecl::every("ext.acme.blink", 5),
-    ],
-    // ...
-    ..Default::default()
-};
+let cap = Capability::new("sensor", "gaze")
+    .persistent()
+    .emits(["ext.acme.*"])
+    .stream(StreamDecl::latest("ext.acme.gaze_point", 250))
+    .stream(StreamDecl::every("ext.acme.blink", 5));
 ```
 
 `examples/gaze.rs` is a complete one. A platform that predates `streams`
