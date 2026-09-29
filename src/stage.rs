@@ -501,9 +501,11 @@ where
         stop_request: Arc::new(Mutex::new(None)),
     };
 
-    ctx.emit(event_type::CAPABILITY, &cap).await?;
-
+    // The trap goes in BEFORE the capability: a platform that has read the
+    // handshake may send SIGTERM at once, and must get a clean stop.
     spawn_signal_watcher(ctx.stop.clone(), ctx.notify.clone());
+
+    ctx.emit(event_type::CAPABILITY, &cap).await?;
     if opts.listen_for_stop {
         spawn_stop_listener(
             ctx.stop.clone(),
@@ -516,17 +518,29 @@ where
 }
 
 /// Set the stop flag on SIGTERM/SIGINT (Ctrl-C on non-unix).
+///
+/// The handlers are registered here, synchronously, not inside the spawned
+/// task: tokio installs the process handler at `signal()`, and on a
+/// current_thread runtime a spawned task is not polled until the caller first
+/// yields. Registered lazily, a SIGTERM in that window took the default action
+/// and killed the stage mid-handshake.
 fn spawn_signal_watcher(stop: Arc<AtomicBool>, notify: Arc<Notify>) {
+    #[cfg(unix)]
+    let signals = {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            (Ok(t), Ok(i)) => Some((t, i)),
+            _ => None,
+        }
+    };
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            use tokio::signal::unix::{SignalKind, signal};
-            let (mut term, mut int) = match (
-                signal(SignalKind::terminate()),
-                signal(SignalKind::interrupt()),
-            ) {
-                (Ok(t), Ok(i)) => (t, i),
-                _ => return,
+            let Some((mut term, mut int)) = signals else {
+                return;
             };
             tokio::select! {
                 _ = term.recv() => {}
