@@ -102,13 +102,23 @@ impl<R: AsyncRead + Unpin> Reader<R> {
     const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
 
     /// Read the next event, or `Ok(None)` on clean EOF.
+    ///
+    /// A clean EOF is end of stream with nothing read. End of stream with a
+    /// partial header (bytes but no trailing newline) is an `UnexpectedEof`
+    /// error — truncation must never read as an orderly close, even when the
+    /// bytes happen to parse as a whole header.
     pub async fn read_event(&mut self) -> io::Result<Option<Event>> {
         self.line_buf.clear();
         let n = self.inner.read_line(&mut self.line_buf).await?;
         if n == 0 {
             return Ok(None);
         }
-        let line = self.line_buf.trim_end_matches('\n');
+        let Some(line) = self.line_buf.strip_suffix('\n') else {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "wire: incomplete header (no trailing newline)",
+            ));
+        };
         let header: WireHeader = serde_json::from_str(line).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -274,6 +284,33 @@ mod tests {
         a.write_all(b"\n").await.unwrap();
         a.write_all(&[0u8; 16]).await.unwrap();
         drop(a); // close write end so read_exact gets EOF rather than blocking
+        let err = reader.read_event().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// End of stream with a partial header is truncation, never an orderly
+    /// close — even when the bytes happen to parse as a whole header.
+    #[tokio::test]
+    async fn header_without_newline_at_eof_is_an_error() {
+        for raw in [&br#"{"type":"audio_ch"#[..], &br#"{"type":"ok"}"#[..]] {
+            let (mut a, b) = duplex(4096);
+            let mut reader = Reader::new(b);
+            a.write_all(raw).await.unwrap();
+            drop(a);
+            let err = reader.read_event().await.unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof, "{raw:?}");
+            assert!(err.to_string().contains("incomplete header"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn header_with_no_payload_bytes_is_unexpected_eof() {
+        let (mut a, b) = duplex(4096);
+        let mut reader = Reader::new(b);
+        a.write_all(b"{\"type\":\"audio_chunk\",\"payload_length\":8}\n")
+            .await
+            .unwrap();
+        drop(a);
         let err = reader.read_event().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }

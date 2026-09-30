@@ -878,6 +878,15 @@ pub struct DisplayInfo {
     pub scale_factor: f64,
     pub is_main: bool,
     pub is_builtin: bool,
+    /// The display is connected but asleep (display sleep, not system
+    /// sleep): powered down and showing nothing until it wakes. It is still
+    /// listed — a sleeping display has not been removed — and its geometry
+    /// (size, scale, refresh rate) is its last-known mode, still valid. A
+    /// change of this flag arrives as `display_changed`. Absent on the wire
+    /// (an older producer) reads as awake; producers that cannot observe
+    /// display sleep report `false`.
+    #[serde(default)]
+    pub is_asleep: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
