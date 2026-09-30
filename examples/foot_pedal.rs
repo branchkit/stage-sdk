@@ -1,17 +1,19 @@
 //! A complete source stage in about forty lines — the shape a third-party
 //! stage takes when its domain is one the platform has never heard of.
 //!
-//! Run it directly to watch the wire protocol:
+//! Run it directly to watch the wire protocol on stdout — the capability
+//! handshake first, then one event per line. Ctrl-C stops it cleanly, the way
+//! the platform's SIGTERM does:
 //!
 //! ```text
 //! cargo run --example foot_pedal
 //! ```
 //!
-//! and through the conformance harness to check it against the contract:
+//! Its tests check the capability with the rules the platform applies when
+//! the stage starts:
 //!
 //! ```text
-//! cargo build --example foot_pedal
-//! cargo run -p branchkit-stage-sdk-test -- ./target/debug/examples/foot_pedal
+//! cargo test --example foot_pedal
 //! ```
 
 use branchkit_stage_sdk::events::Capability;
@@ -22,13 +24,20 @@ async fn main() {
     stage::run(run()).await
 }
 
-async fn run() -> Result {
+const PEDAL_DOWN: &str = "ext.example.pedal.down";
+const PEDAL_UP: &str = "ext.example.pedal.up";
+
+/// What the stage declares in its handshake.
+fn capability() -> Capability {
     // `emits` is the vendor namespace this stage owns. The platform routes
     // these without decoding them — it never learns what a pedal is.
-    let cap = Capability::new("sensor", "foot_pedal")
+    Capability::new("sensor", "foot_pedal")
         .persistent()
-        .emits(["ext.example.pedal.*"]);
+        .emits(["ext.example.pedal.*"])
+}
 
+async fn run() -> Result {
+    let cap = capability();
     stage::serve_source(cap, SourceOptions::default(), |mut ctx| async move {
         // A real stage would wait on its device here. This one simulates a
         // press every 300ms so the shape is visible.
@@ -39,15 +48,38 @@ async fn run() -> Result {
                 _ = ctx.stopped_signal() => break,
             }
             down = !down;
-            let event = if down {
-                "ext.example.pedal.down"
-            } else {
-                "ext.example.pedal.up"
-            };
+            let event = if down { PEDAL_DOWN } else { PEDAL_UP };
             ctx.emit(event, &serde_json::json!({ "pedal": 1 })).await?;
         }
         branchkit_stage_sdk::stage_log::info("pedal stage shutting down");
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use branchkit_stage_sdk::events::declaration_covers;
+
+    /// Every event the stage emits is one its `emits` declaration covers.
+    /// The platform drops an undeclared type rather than routing it.
+    #[test]
+    fn declares_what_it_emits() {
+        let cap = capability();
+        for event in [PEDAL_DOWN, PEDAL_UP] {
+            assert!(
+                cap.emits.iter().any(|d| declaration_covers(d, event)),
+                "{event} is not covered by {:?}",
+                cap.emits
+            );
+        }
+    }
+
+    /// The platform refuses to start a stage whose stream declarations it
+    /// cannot carry; this one declares none, so there is nothing to refuse.
+    #[test]
+    fn the_platform_admits_it() {
+        assert_eq!(capability().check_streams(), Ok(()));
+    }
 }

@@ -10,18 +10,19 @@
 //! - `ext.example.blink` — a thing that HAPPENED. Every one matters, so it
 //!   keeps the default, `every`.
 //!
-//! Run it directly to watch the wire protocol:
+//! Run it directly to watch the wire protocol on stdout — the capability
+//! handshake first, then one event per line. Ctrl-C stops it cleanly, the way
+//! the platform's SIGTERM does:
 //!
 //! ```text
 //! cargo run --example gaze
 //! ```
 //!
-//! and through the conformance harness, which checks the declarations with
-//! the platform's own rule and the rates the stage actually emits:
+//! Its tests check the stream declarations with the rule the platform applies
+//! when the stage starts, [`Capability::check_streams`]:
 //!
 //! ```text
-//! cargo build --example gaze
-//! cargo run -p branchkit-stage-sdk-test -- ./target/debug/examples/gaze
+//! cargo test --example gaze
 //! ```
 
 use std::time::Duration;
@@ -37,13 +38,17 @@ async fn main() {
     stage::run(run()).await
 }
 
-async fn run() -> Result {
-    let cap = Capability::new("sensor", "gaze")
+/// What the stage declares in its handshake.
+fn capability() -> Capability {
+    Capability::new("sensor", "gaze")
         .persistent()
         .emits(["ext.example.*"])
         .stream(StreamDecl::latest("ext.example.gaze_point", GAZE_HZ))
-        .stream(StreamDecl::every("ext.example.blink", 2));
+        .stream(StreamDecl::every("ext.example.blink", 2))
+}
 
+async fn run() -> Result {
+    let cap = capability();
     stage::serve_source(cap, SourceOptions::default(), |mut ctx| async move {
         let mut tick = tokio::time::interval(Duration::from_secs(1) / GAZE_HZ);
         // A late tick is skipped, never made up in a burst: the stream must
@@ -72,4 +77,16 @@ async fn run() -> Result {
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The platform checks these declarations when the stage starts and
+    /// refuses to run it if it cannot carry them. Both streams fit.
+    #[test]
+    fn the_platform_admits_its_streams() {
+        assert_eq!(capability().check_streams(), Ok(()));
+    }
 }

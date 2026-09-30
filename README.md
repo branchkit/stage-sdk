@@ -90,8 +90,8 @@ yours, under **`ext.<vendor>.<name>`**:
 - Declare each steady stream's rate in `Capability::streams`. The platform
   checks the declarations when your stage starts and refuses to run it —
   naming the stream and the limit — if it cannot carry them, rather than
-  dropping events later. `Capability::check_streams` is that check; the
-  conformance harness runs it too.
+  dropping events later. `Capability::check_streams` is that check, so a
+  unit test can run it too.
 - A stream that is *state* — a gaze position, a pointer, a pedal's travel —
   can be declared `latest`: each subscriber gets the newest value at the pace
   it can take, instead of every sample or a backlog of stale ones. Put the
@@ -129,19 +129,25 @@ Get this backwards and you get a stall, not an error.
 
 ## Testing
 
-The conformance harness is the acceptance bar. Point it at your binary and it
-picks a suite from your own capability declaration:
+A stage is a program that speaks its protocol on stdin and stdout, so you can
+run it and read what it says. Its first line is the capability handshake;
+every line after is an event:
 
 ```bash
-cargo run -p branchkit-stage-sdk-test -- ./target/debug/my_stage
+cargo run --example foot_pedal
 ```
 
-It checks the handshake, drives a credit-accounted session as a true sender
-(so a stage whose grants trail its cadence starves and fails), verifies
-unknown-event leniency and error-path termination, and validates every byte you
-emit against the strict framing rules. A source stage's declared streams are
-checked with the platform's own start-up rule and held to their declared
-rates.
+A source stage stops on SIGTERM, which is how the platform ends it, or on
+Ctrl-C.
+
+The rules the platform applies to your declarations when the stage starts are
+functions in this crate, so a unit test can hold your capability to them:
+
+- `Capability::check_streams` — the start-up check for declared streams.
+- `events::declaration_covers` — whether an `emits` entry covers an event type.
+  The platform does not route a type your declaration does not cover.
+
+Both examples carry such tests: `cargo test --example gaze`.
 
 ## Shipping it
 

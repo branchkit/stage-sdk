@@ -21,8 +21,10 @@
 //! - [`credit`] — receiver-side flow-credit granting (the counter + emission
 //!   mechanism; window sizes stay per-stage policy).
 //!
-//! The conformance harness in `branchkit/stage-sdk-test` is the acceptance
-//! bar for a stage built against this crate.
+//! The rules the platform applies to a stage's declarations when it starts
+//! are functions here ([`events::Capability::check_streams`],
+//! [`events::declaration_covers`]), so a stage's own tests can hold it to
+//! them.
 //!
 //! ## Which structs can grow
 //!
