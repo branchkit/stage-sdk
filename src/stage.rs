@@ -749,6 +749,9 @@ pub trait SpeechEngine {
     async fn speak(&mut self, req: Speak, ctx: &mut SpeakCtx<'_>) -> Result;
 }
 
+/// The utterance being spoken and its cancel flag, shared with the reader.
+type Current = Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>;
+
 /// What the stdin reader hands the speaking loop.
 enum Inbound {
     Speak(Speak),
@@ -788,7 +791,7 @@ pub async fn serve_speech_engine_on<E: SpeechEngine>(
 
     // The utterance being spoken, so a cancel for it reaches the engine
     // while `speak` is still running rather than after it returns.
-    let current: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>> = Arc::new(Mutex::new(None));
+    let current: Current = Arc::new(Mutex::new(None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
     spawn_speak_reader(reader, current.clone(), tx);
 
@@ -887,7 +890,7 @@ async fn write_audio_stop(writer: &mut Writer<BoxWrite>, session_id: &str) -> Re
 /// ends the stage: the platform is gone.
 fn spawn_speak_reader(
     reader: BoxReadSend,
-    current: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
+    current: Current,
     tx: tokio::sync::mpsc::UnboundedSender<Inbound>,
 ) {
     tokio::spawn(async move {
