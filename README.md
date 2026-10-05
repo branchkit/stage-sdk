@@ -1,7 +1,14 @@
 # branchkit-stage-sdk
 
-Write a **pipeline stage** for [BranchKit](https://branchkit.dev): a standalone
-binary the platform spawns, sandboxes, supervises, and routes.
+Write a **pipeline stage** for [BranchKit](https://github.com/branchkit), an
+accessibility plugin platform for the desktop: a standalone binary the platform
+spawns, sandboxes, supervises, and routes.
+
+Stages are not plugins. A plugin is a process that holds commands, state and
+behavior, written with the Go, TypeScript or Python SDK. A stage is one step of
+a pipeline: an input source (a device, an OS notification, a sensor) or a
+transform on a stream such as audio. Stages are written in Rust, against this
+crate, and a plugin ships them.
 
 A stage speaks a small line protocol over stdin and stdout — one JSON header
 line, optionally followed by a binary payload. This crate is the layer above
@@ -12,17 +19,18 @@ MIT licensed. Depends on nothing from the BranchKit platform.
 
 ## Install
 
-```bash
-cargo add branchkit-stage-sdk
-```
-
-Or by hand:
+This README describes 0.2. crates.io has only 0.1.0 so far, which predates
+this API, so until 0.2 is published depend on the repository:
 
 ```toml
 [dependencies]
-branchkit-stage-sdk = "0.2"
+branchkit-stage-sdk = { git = "https://github.com/branchkit/stage-sdk" }
 tokio = { version = "1", features = ["full"] }
+serde_json = "1"   # the examples build event data with serde_json::json!
 ```
+
+Once 0.2 is on crates.io, `branchkit-stage-sdk = "0.2"` replaces the git line.
+Requires Rust 1.85 or newer (edition 2024).
 
 A stage is a `tokio` binary, so you bring your own runtime. The `schema`
 feature is for regenerating the platform's pipeline schema and is not
@@ -62,9 +70,9 @@ async fn run() -> Result {
 }
 ```
 
-- [`stage::serve_source`] — **notifier-driven**. Your device, an OS
+- `stage::serve_source` — **notifier-driven**. Your device, an OS
   notification, a timer. May never read stdin. Domain-free.
-- [`stage::serve_audio_consumer`] — **read-driven**, for a stage in an audio
+- `stage::serve_audio_consumer` — **read-driven**, for a stage in an audio
   chain. Audio-bound, because audio is the only *stream* the wire has today.
 
 ## Your own vocabulary
@@ -152,8 +160,10 @@ Both examples carry such tests: `cargo test --example gaze`.
 ## Shipping it
 
 A stage is shipped **by a plugin** — `provides.stages` in `plugin.json` — and
-runs under that plugin's sandbox profile. See
-[Contributing a Pipeline Stage](https://branchkit.dev/how-to/pipelines/contributing-a-stage).
+runs under that plugin's sandbox profile. The platform docs that ship with the
+app cover the manifest side in `how-to/pipelines/contributing-a-stage.md`
+(`branchkit-cli docs path` prints the directory; see
+[branchkit-cli](https://github.com/branchkit/branchkit-cli)).
 
 ## License
 
