@@ -1,8 +1,9 @@
 //! Binary streaming framing for the pipeline dispatch path.
 //!
 //! Each wire event is one JSON header line terminated by `\n`, optionally
-//! followed by exactly `payload_length` bytes of binary payload. Same
-//! framing across stdio child-process, Unix socket, and TCP. Locked
+//! followed by exactly `payload_length` bytes of binary payload. Stages are
+//! reached over a child process's stdio today; the framing is the same for
+//! any stream transport (a Unix socket, TCP) added later. Locked
 //! 2026-05-03. Chosen over a sidecar channel or length-only binary framing
 //! so a network satellite needs no stage migration; kept separate from the
 //! JSON-RPC plugin protocol.
