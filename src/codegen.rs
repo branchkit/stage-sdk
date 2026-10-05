@@ -84,7 +84,7 @@ impl Tier {
 pub fn tier_of_type(name: &str) -> Tier {
     match name {
         "WireHeader" | "Capability" | "StreamDecl" | "Delivery" | "VoiceInfo" | "ErrorEvent"
-        | "FlowCredit" => Tier::Core,
+        | "FlowCredit" | "Request" | "Reply" => Tier::Core,
         "AudioStart" | "AudioChunk" | "AudioStop" | "AudioFormat" | "Speak" | "PlaybackStarted"
         | "PlaybackEnded" => Tier::Audio,
         "Transcript" | "VocabularyUpdate" | "GrammarDagWire" | "WireArc" | "OpenState" => {
@@ -97,7 +97,7 @@ pub fn tier_of_type(name: &str) -> Tier {
 /// The tier a wire tag belongs to.
 pub fn tier_of_tag(tag: &str) -> Tier {
     match tag {
-        "capability" | "error" | "flow_credit" => Tier::Core,
+        "capability" | "error" | "flow_credit" | "request" | "reply" => Tier::Core,
         "audio_start" | "audio_chunk" | "audio_stop" | "speak" | "playback_started"
         | "playback_ended" => Tier::Audio,
         "transcript" | "vocabulary_update" => Tier::Recognition,

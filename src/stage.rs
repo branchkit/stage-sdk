@@ -81,7 +81,7 @@ use tokio::sync::Notify;
 
 use crate::credit::CreditGranter;
 use crate::events::{
-    AudioChunk, AudioFormat, AudioStart, AudioStop, Capability, Speak, event_type,
+    AudioChunk, AudioFormat, AudioStart, AudioStop, Capability, Reply, Request, Speak, event_type,
 };
 use crate::stage_log;
 use crate::wire::{Event, Reader, Writer};
@@ -935,6 +935,106 @@ fn spawn_speak_reader(
     });
 }
 
+// ---- Request stages: one answer per request ----
+
+/// A request stage's work: answer one request. The fourth stage shape,
+/// beside the audio consumer, the source and the speech engine — text or
+/// data in, one answer out, for work a plugin wants done in a confined
+/// process of its own (a language model, a translator, a classifier).
+///
+/// The capability declares `stage_type: "request"`. Requests are answered
+/// one at a time, in arrival order.
+#[allow(async_fn_in_trait)]
+pub trait RequestHandler {
+    /// Answer one request's `body`. An `Err` becomes this request's reply
+    /// `error`, and the stage goes on to the next request. A failure that
+    /// makes the stage unusable (a model that does not load) belongs before
+    /// [`serve_requests`], where [`run`] turns it into exit 1.
+    ///
+    /// Work that blocks a thread (inference) runs under
+    /// `tokio::task::spawn_blocking`.
+    async fn handle(
+        &mut self,
+        body: serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, String>;
+}
+
+/// Serve a request stage on stdin/stdout: send the capability, then answer
+/// every `request` with exactly one `reply` carrying its `request_id`, until
+/// stdin closes. A `request` that cannot be read (no `request_id`) gets an
+/// `error` event, since there is no id to reply to; other event types are
+/// ignored, as wire leniency is contract.
+pub async fn serve_requests<H: RequestHandler>(cap: Capability, handler: &mut H) -> Result {
+    serve_requests_on(
+        Box::new(tokio::io::stdin()),
+        Box::new(tokio::io::stdout()),
+        cap,
+        handler,
+    )
+    .await
+}
+
+/// [`serve_requests`] over explicit transports, for tests.
+pub async fn serve_requests_on<H: RequestHandler>(
+    reader: BoxRead,
+    writer: BoxWrite,
+    cap: Capability,
+    handler: &mut H,
+) -> Result {
+    let mut reader = Reader::new(reader);
+    let mut writer = Writer::new(writer);
+    writer
+        .write_event(&Event::new(
+            event_type::CAPABILITY,
+            serde_json::to_value(&cap)?,
+        ))
+        .await?;
+    writer.flush().await?;
+
+    while let Some(ev) = reader.read_event().await? {
+        if ev.event_type != event_type::REQUEST {
+            continue;
+        }
+        let req: Request = match serde_json::from_value(ev.data) {
+            Ok(req) => req,
+            Err(e) => {
+                writer
+                    .write_event(&Event::new(
+                        event_type::ERROR,
+                        serde_json::json!({
+                            "code": "bad_request",
+                            "message": format!("unreadable request: {e}"),
+                            "fatal": false,
+                        }),
+                    ))
+                    .await?;
+                writer.flush().await?;
+                continue;
+            }
+        };
+        let reply = match handler.handle(req.body).await {
+            Ok(body) => Reply {
+                request_id: req.request_id,
+                body: Some(body),
+                error: None,
+            },
+            Err(error) => Reply {
+                request_id: req.request_id,
+                body: None,
+                error: Some(error),
+            },
+        };
+        writer
+            .write_event(&Event::new(
+                event_type::REPLY,
+                serde_json::to_value(&reply)?,
+            ))
+            .await?;
+        writer.flush().await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1472,5 +1572,92 @@ mod tests {
         let a = shared_clock_ms();
         std::thread::sleep(std::time::Duration::from_millis(5));
         assert!(shared_clock_ms() >= a + 4);
+    }
+
+    // ---- request stages ----
+
+    struct Upper;
+    impl RequestHandler for Upper {
+        async fn handle(
+            &mut self,
+            body: serde_json::Value,
+        ) -> std::result::Result<serde_json::Value, String> {
+            match body.get("text").and_then(|t| t.as_str()) {
+                Some(t) => Ok(json!({ "text": t.to_uppercase() })),
+                None => Err("no text".into()),
+            }
+        }
+    }
+
+    async fn run_requests(inbound: Vec<Event>) -> Vec<Event> {
+        let (harness_w, stage_r) = duplex(1 << 16);
+        let (stage_w, harness_r) = duplex(1 << 16);
+        let mut w = Writer::new(harness_w);
+        for ev in &inbound {
+            w.write_event(ev).await.unwrap();
+        }
+        drop(w);
+        serve_requests_on(
+            Box::new(stage_r),
+            Box::new(stage_w),
+            cap("request"),
+            &mut Upper,
+        )
+        .await
+        .unwrap();
+        let mut out = Vec::new();
+        let mut r = Reader::new(harness_r);
+        while let Some(ev) = r.read_event().await.unwrap() {
+            out.push(ev);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn every_request_gets_one_reply_with_its_id_in_order() {
+        let out = run_requests(vec![
+            Event::new(
+                event_type::REQUEST,
+                json!({"request_id": "a", "body": {"text": "one"}}),
+            ),
+            Event::new("vocabulary_update", json!({})),
+            Event::new(event_type::REQUEST, json!({"request_id": "b", "body": {}})),
+            Event::new(
+                event_type::REQUEST,
+                json!({"request_id": "c", "body": {"text": "three"}}),
+            ),
+        ])
+        .await;
+        assert_eq!(out[0].event_type, event_type::CAPABILITY);
+        let replies: Vec<Reply> = out[1..]
+            .iter()
+            .map(|e| {
+                assert_eq!(e.event_type, event_type::REPLY);
+                serde_json::from_value(e.data.clone()).unwrap()
+            })
+            .collect();
+        assert_eq!(replies.len(), 3);
+        assert_eq!(replies[0].request_id, "a");
+        assert_eq!(replies[0].body, Some(json!({"text": "ONE"})));
+        assert_eq!(replies[1].request_id, "b");
+        assert_eq!(replies[1].error.as_deref(), Some("no text"));
+        assert_eq!(replies[1].body, None);
+        assert_eq!(replies[2].body, Some(json!({"text": "THREE"})));
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_request_is_an_error_event_and_serving_continues() {
+        let out = run_requests(vec![
+            Event::new(event_type::REQUEST, json!({"body": {"text": "no id"}})),
+            Event::new(
+                event_type::REQUEST,
+                json!({"request_id": "z", "body": {"text": "ok"}}),
+            ),
+        ])
+        .await;
+        assert_eq!(out[1].event_type, event_type::ERROR);
+        assert_eq!(out[1].data["code"], "bad_request");
+        assert_eq!(out[2].event_type, event_type::REPLY);
+        assert_eq!(out[2].data["request_id"], "z");
     }
 }

@@ -196,6 +196,19 @@ pub fn pipeline_schema_value() -> Value {
             false,
             "stage → host",
         );
+        // Request stages: one `reply` per `request`, same id, in order.
+        row(
+            t::REQUEST,
+            sub::<Request>(&mut generator),
+            false,
+            "host → stage",
+        );
+        row(
+            t::REPLY,
+            sub::<Reply>(&mut generator),
+            false,
+            "stage → host",
+        );
     }
 
     // A tag with no row regenerates contracts/pipeline.json byte-identical,

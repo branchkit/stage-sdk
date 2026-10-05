@@ -50,6 +50,9 @@ pub mod event_type {
     pub const PLAYBACK_STARTED: &str = "playback_started";
     pub const PLAYBACK_ENDED: &str = "playback_ended";
 
+    pub const REQUEST: &str = "request";
+    pub const REPLY: &str = "reply";
+
     /// Every tag above, in declaration order — the single list the schema
     /// projection and the conformance harness both check themselves against,
     /// so a new tag cannot reach one and miss the other. `schema.rs` asserts
@@ -81,6 +84,8 @@ pub mod event_type {
         SPEAK,
         PLAYBACK_STARTED,
         PLAYBACK_ENDED,
+        REQUEST,
+        REPLY,
     ];
 }
 
@@ -921,6 +926,33 @@ pub struct PlaybackEnded {
     /// True when playback was stopped before the audio ran out.
     #[serde(default)]
     pub interrupted: bool,
+}
+
+// ---- Request stages ----
+
+/// `request`: the host asks a request stage (`stage_type: "request"`) for one
+/// answer. The stage answers every request with exactly one `reply` carrying
+/// the same `request_id`, in the order the requests arrived. What `body`
+/// holds is between the stage and the plugin that ships it: the platform
+/// carries it and never reads it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Request {
+    pub request_id: String,
+    #[serde(default)]
+    pub body: serde_json::Value,
+}
+
+/// `reply`: a request stage's answer to one `request`. Exactly one of `body`
+/// (the answer) and `error` (why there is none) is set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Reply {
+    pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ---- Device monitoring events ----
