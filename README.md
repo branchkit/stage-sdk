@@ -42,7 +42,7 @@ and its setters (`.persistent()`, `.emits([...])`, `.stream(...)`, …), and
 `#[non_exhaustive]` from 0.2, so a struct literal no longer compiles, and a
 field added in a later release will not break your stage.
 
-## Two shapes
+## Three shapes
 
 ```rust
 use branchkit_stage_sdk::events::Capability;
@@ -74,6 +74,47 @@ async fn run() -> Result {
   notification, a timer. May never read stdin. Domain-free.
 - `stage::serve_audio_consumer` — **read-driven**, for a stage in an audio
   chain. Audio-bound, because audio is the only *stream* the wire has today.
+- `stage::serve_speech_engine` — **request-driven**, for a text-to-speech
+  engine (`stage_type` `tts`). Each `speak` request becomes an audio session
+  you produce, streaming; you implement how to say one request, and the
+  runtime owns the order, cancellation, and closing every utterance.
+
+### A speech engine
+
+```rust
+use branchkit_stage_sdk::events::{AudioFormat, Capability, Speak, VoiceInfo};
+use branchkit_stage_sdk::stage::{self, Flow, Result, SpeakCtx, SpeechEngine};
+
+struct MyVoice;
+
+impl SpeechEngine for MyVoice {
+    async fn speak(&mut self, req: Speak, ctx: &mut SpeakCtx<'_>) -> Result {
+        ctx.start(AudioFormat::PCM_16K_MONO).await?;
+        for piece in synthesize(&req.text) {
+            // Send each piece as it is made; Flow::Stop means cancelled.
+            if ctx.audio(&piece).await? == Flow::Stop {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn run() -> Result {
+    let cap = Capability::new("tts", "my_voice")
+        .persistent()
+        .voice(VoiceInfo::new("warm", "Warm (English)", "en-US"));
+    stage::serve_speech_engine(cap, &mut MyVoice).await
+}
+```
+
+Declare at least one voice; the first is the default. A request may name a
+voice, a pace (`rate`, 1.0 = normal) and a language. Send audio in pieces as
+you synthesize it, never the whole utterance at the end, so the first words
+play while the rest are made. Synthesis that blocks a thread goes under
+`tokio::task::spawn_blocking` and watches `ctx.cancel_flag()`: the platform
+cancels an utterance the moment the person starts talking.
+`examples/hum.rs` is a complete one that hums a tone per word.
 
 ## Your own vocabulary
 
@@ -131,7 +172,8 @@ ignores the field and delivers every event, so declaring is always safe.
 Get this backwards and you get a stall, not an error.
 
 - **Consuming audio → you must grant credit.** `CreditPolicy` drives it for you.
-- **Producing audio → do not implement credit at all.** The platform holds the
+- **Producing audio → do not implement credit at all** (a speech engine
+  included). The platform holds the
   sender-side window; a producer that outruns it blocks on the pipe. There is
   deliberately no sender-side helper here.
 

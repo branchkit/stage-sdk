@@ -46,6 +46,10 @@ pub mod event_type {
     pub const POWER_SNAPSHOT: &str = "power_snapshot";
     pub const POWER_SOURCE_CHANGED: &str = "power_source_changed";
 
+    pub const SPEAK: &str = "speak";
+    pub const PLAYBACK_STARTED: &str = "playback_started";
+    pub const PLAYBACK_ENDED: &str = "playback_ended";
+
     /// Every tag above, in declaration order — the single list the schema
     /// projection and the conformance harness both check themselves against,
     /// so a new tag cannot reach one and miss the other. `schema.rs` asserts
@@ -74,6 +78,9 @@ pub mod event_type {
         DISPLAY_CHANGED,
         POWER_SNAPSHOT,
         POWER_SOURCE_CHANGED,
+        SPEAK,
+        PLAYBACK_STARTED,
+        PLAYBACK_ENDED,
     ];
 }
 
@@ -364,6 +371,51 @@ pub struct Capability {
     /// predates it ignores it and delivers every event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streams: Vec<StreamDecl>,
+    /// The voices a speech engine (`stage_type` `tts`) can speak in, so the
+    /// person can be offered a choice without the platform knowing anything
+    /// about the engine. The first is the engine's default: a `speak` request
+    /// that names no voice, or a voice not listed here, is spoken in it.
+    ///
+    /// Empty = the stage is not a speech engine, which is every other stage.
+    /// A speech engine declares at least one; the conformance harness holds
+    /// it to that.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voices: Vec<VoiceInfo>,
+}
+
+/// One voice a speech engine declares in [`Capability::voices`].
+///
+/// Build one with [`VoiceInfo::new`]. `#[non_exhaustive]`, like the other
+/// values a stage declares, so a later field (a sample of the voice, say)
+/// does not break a stage that builds one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "One voice a speech engine declares in Capability.voices: the id a speak request names it by, a name a person can choose it by, and the language it speaks."
+    )
+)]
+#[non_exhaustive]
+pub struct VoiceInfo {
+    /// What a `speak` request names this voice by. Stable across releases
+    /// of the engine: a person's stored choice refers to it.
+    pub id: String,
+    /// The voice as a person would choose it — "Heart (American English)".
+    pub name: String,
+    /// BCP 47 tag of the language it speaks — "en-US", "pt-BR".
+    pub locale: String,
+}
+
+impl VoiceInfo {
+    /// A voice with this id, display name and language.
+    pub fn new(id: impl Into<String>, name: impl Into<String>, locale: impl Into<String>) -> Self {
+        VoiceInfo {
+            id: id.into(),
+            name: name.into(),
+            locale: locale.into(),
+        }
+    }
 }
 
 /// How the platform delivers one declared stream to its subscribers.
@@ -611,6 +663,13 @@ impl Capability {
         self.streams.extend(streams);
         self
     }
+
+    /// Declare one voice in [`Capability::voices`]. The first declared is
+    /// the engine's default.
+    pub fn voice(mut self, voice: VoiceInfo) -> Self {
+        self.voices.push(voice);
+        self
+    }
 }
 
 impl Capability {
@@ -792,6 +851,76 @@ pub struct VocabularyUpdate {
     /// to the flat word-list grammar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grammar_dag: Option<crate::grammar_dag::GrammarDagWire>,
+}
+
+// ---- Speech output ----
+
+/// The `speak` request: say these words. Sent by the platform to a speech
+/// engine (`stage_type` `tts`), one per utterance.
+///
+/// The engine answers on the same `session_id` with the audio session
+/// vocabulary, run the other way: `audio_start` (its format), `audio_chunk`s
+/// as it synthesizes — streaming, so the first words play while the rest are
+/// still being made — and exactly one `audio_stop` when the utterance is
+/// over, whether it finished, failed (an `error` with this `session_id`
+/// first) or was cancelled. Every request gets that one `audio_stop`, even
+/// one cancelled before it started, so the platform never waits on an
+/// utterance that will not come.
+///
+/// Cancel is an inbound `audio_stop` naming the session: the engine stops
+/// producing for it at once and closes it. Requests are spoken in the order
+/// they arrive; which utterance goes first, and what cuts in, is the
+/// platform's decision, not the engine's.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Speak {
+    /// The utterance. Every event the engine sends about it carries this.
+    pub session_id: String,
+    /// The words, plain text without markup, read as written.
+    pub text: String,
+    /// The `id` of one of the engine's `voices` (its capability). Absent, or
+    /// not one the engine declared → its default voice (the first declared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Pace relative to the voice's own: 1.0 is normal, 2.0 twice as fast.
+    /// Absent → 1.0. An engine that cannot change pace speaks at 1.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f32>,
+    /// BCP 47 tag of the language `text` is in, when the caller knows it. An
+    /// engine with voices in several languages may use it to pick one when no
+    /// voice is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+}
+
+/// `playback_started`: an audio session's first sound left the speakers.
+///
+/// Emitted by an audio sink (`stage_type` `speaker`) — the stage that plays
+/// audio rather than processing it — so the platform knows exactly when the
+/// person, and the microphone, began to hear it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PlaybackStarted {
+    pub session_id: String,
+    /// When, on the shared clock (the `AudioChunk` `timestamp_ms` timebase,
+    /// which each SDK's stage runtime reads for you). Comparable with the
+    /// onsets a recognizer
+    /// reports, which is what lets the platform drop its own voice coming
+    /// back through the microphone.
+    pub at_ms: u64,
+}
+
+/// `playback_ended`: an audio session's last sound left the speakers, or it
+/// was cut off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PlaybackEnded {
+    pub session_id: String,
+    /// When, on the shared clock (as `playback_started`'s `at_ms`).
+    pub at_ms: u64,
+    /// True when playback was stopped before the audio ran out.
+    #[serde(default)]
+    pub interrupted: bool,
 }
 
 // ---- Device monitoring events ----

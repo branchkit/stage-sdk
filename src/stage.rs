@@ -13,14 +13,21 @@
 //!
 //! # Which entry point
 //!
-//! There are two, because there are two loop shapes (verified across all
-//! first-party stages):
+//! There are three, because there are three loop shapes:
 //!
 //! - [`serve_audio_consumer`] — **read-driven**. The stage's work is a reaction
 //!   to an inbound audio session. VAD gates, STT engines, command recognizers.
+//!   (An audio sink, which plays what it consumes, also reports when it was
+//!   heard — `playback_started` / `playback_ended`, stamped with
+//!   [`shared_clock_ms`] — at moments no inbound event marks, so it drives
+//!   [`crate::wire`] and [`crate::credit`] itself rather than this loop.)
 //! - [`serve_source`] — **notifier-driven**. The stage produces spontaneously
 //!   from a device, OS notification, or timer, and may never read stdin at
 //!   all. Power/display/location monitors, microphones.
+//! - [`serve_speech_engine`] — **request-driven**. The stage turns each
+//!   `speak` request into an audio session it produces, streaming, and stops
+//!   one the moment it is cancelled. Text-to-speech engines: the pipeline run
+//!   the other way, from words to the speakers.
 //!
 //! An audio source is the second shape plus a stdin listener for the stop
 //! request; see [`SourceOptions::listen_for_stop`].
@@ -58,7 +65,8 @@
 //! - **Consuming audio → you must grant credit.** That is what
 //!   [`CreditPolicy`] and [`crate::credit::CreditGranter`] are for, and
 //!   [`serve_audio_consumer`] drives it for you.
-//! - **Producing audio → you must not implement credit at all.** The platform
+//! - **Producing audio → you must not implement credit at all.** That covers
+//!   speech engines as much as microphones. The platform
 //!   sits between every pair of stages and holds the sender-side window; a
 //!   producer that outruns it blocks on the pipe. There is deliberately no
 //!   sender-side helper in this crate.
@@ -72,7 +80,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 
 use crate::credit::CreditGranter;
-use crate::events::{AudioChunk, AudioStart, AudioStop, Capability, event_type};
+use crate::events::{
+    AudioChunk, AudioFormat, AudioStart, AudioStop, Capability, Speak, event_type,
+};
 use crate::stage_log;
 use crate::wire::{Event, Reader, Writer};
 
@@ -84,6 +94,9 @@ pub type Result<T = ()> = std::result::Result<T, BoxError>;
 
 type BoxRead = Box<dyn AsyncRead + Unpin>;
 type BoxWrite = Box<dyn AsyncWrite + Unpin>;
+/// A reader a spawned task may own: the speech engine reads stdin on its own
+/// task so a cancel is seen while the engine is busy speaking.
+type BoxReadSend = Box<dyn AsyncRead + Unpin + Send>;
 
 /// Run a stage body as `main`, mapping a fatal error to one structured log
 /// line and exit code 1.
@@ -588,6 +601,337 @@ fn spawn_stop_listener(
     });
 }
 
+/// Milliseconds on the shared clock: the clock the platform stamps microphone
+/// audio with (`AudioChunk::timestamp_ms`), and so the clock a recognizer's
+/// word onsets are on.
+///
+/// It is the OS's monotonic clock as the platform reads it on each OS —
+/// `CLOCK_UPTIME_RAW` on macOS (the uptime clock the macOS app stamps its
+/// microphone with), `CLOCK_MONOTONIC` on other unixes, and wall time on
+/// Windows, where every producer on the machine uses it. Two stamps from
+/// different processes on one machine are comparable; a stamp is meaningless
+/// on another machine or across a reboot.
+///
+/// A stage stamps anything the platform will compare with what the
+/// microphone heard: an audio sink stamps `playback_started` /
+/// `playback_ended` with it, which is how the platform drops BranchKit's own
+/// voice coming back through the microphone.
+pub fn shared_clock_ms() -> u64 {
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        let clock = libc::CLOCK_UPTIME_RAW;
+        #[cfg(not(target_os = "macos"))]
+        let clock = libc::CLOCK_MONOTONIC;
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `ts` is a valid, writable timespec; clock_gettime only
+        // writes through the pointer.
+        unsafe { libc::clock_gettime(clock, &mut ts) };
+        ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
+    }
+    #[cfg(not(unix))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+}
+
+/// What a speech engine's [`SpeechEngine::speak`] is handed: where the
+/// utterance's audio goes, and whether it has been cancelled.
+pub struct SpeakCtx<'a> {
+    writer: &'a mut Writer<BoxWrite>,
+    session_id: String,
+    cancel: Arc<AtomicBool>,
+    started: bool,
+}
+
+impl SpeakCtx<'_> {
+    /// The utterance this context belongs to.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Has the platform cancelled this utterance? Stop synthesizing when it
+    /// has: nothing more of it will be sent.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// The cancel flag itself, for synthesis running on another thread (a
+    /// blocking engine under `tokio::task::spawn_blocking`, or a C callback
+    /// that can return "stop"). It turns true when the platform cancels.
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
+    /// Open the utterance's audio in `format`. Call it once, before the first
+    /// [`SpeakCtx::audio`]. Engines usually know their format only once the
+    /// model is loaded, which is why it is given here and not in the
+    /// capability.
+    pub async fn start(&mut self, format: AudioFormat) -> Result {
+        if self.started {
+            return Err("speech engine: start called twice for one utterance".into());
+        }
+        self.started = true;
+        if self.cancelled() {
+            return Ok(());
+        }
+        let start = AudioStart {
+            session_id: self.session_id.clone(),
+            format,
+        };
+        self.writer
+            .write_event(&Event::new(
+                event_type::AUDIO_START,
+                serde_json::to_value(&start)?,
+            ))
+            .await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    /// Send one chunk of audio, in the format given to [`SpeakCtx::start`],
+    /// as soon as it is synthesized; send it in pieces as the engine makes
+    /// them, never the whole utterance at the end, so the first words play
+    /// while the rest are being made.
+    ///
+    /// Returns [`Flow::Stop`] once the utterance is cancelled, without sending
+    /// anything: stop synthesizing and return. The runtime closes the
+    /// utterance either way.
+    pub async fn audio(&mut self, pcm: &[u8]) -> Result<Flow> {
+        if !self.started {
+            return Err("speech engine: audio before start".into());
+        }
+        if self.cancelled() {
+            return Ok(Flow::Stop);
+        }
+        let chunk = AudioChunk {
+            session_id: self.session_id.clone(),
+            timestamp_ms: shared_clock_ms(),
+        };
+        self.writer
+            .write_raw(event_type::AUDIO_CHUNK, serde_json::to_value(&chunk)?, pcm)
+            .await?;
+        self.writer.flush().await?;
+        Ok(Flow::Continue)
+    }
+}
+
+/// A speech engine: text in, audio out (`stage_type` `tts`).
+///
+/// The engine implements one thing, how to say one [`Speak`] request; the
+/// runtime owns the rest of the contract — the handshake, the order requests
+/// are spoken in, cancellation, and closing every utterance with exactly one
+/// `audio_stop`, including one that failed or was cancelled before it began.
+//
+// `async fn` in a public trait: see `AudioConsumer`.
+#[allow(async_fn_in_trait)]
+pub trait SpeechEngine {
+    /// Say `req`: call [`SpeakCtx::start`] once with the audio format, then
+    /// [`SpeakCtx::audio`] for each piece as it is synthesized, and return
+    /// when the utterance is done or [`SpeakCtx::audio`] says
+    /// [`Flow::Stop`].
+    ///
+    /// An `Err` fails this utterance only: the runtime sends an `error` for
+    /// it, closes it, and goes on to the next. A failure that makes the
+    /// engine unusable belongs before [`serve_speech_engine`] (a model that
+    /// does not load), where [`run`] turns it into exit 1.
+    ///
+    /// Never block the runtime here: synthesis that blocks a thread runs
+    /// under `tokio::task::spawn_blocking` and checks
+    /// [`SpeakCtx::cancel_flag`], or the platform's cancel cannot be read
+    /// until it returns.
+    async fn speak(&mut self, req: Speak, ctx: &mut SpeakCtx<'_>) -> Result;
+}
+
+/// What the stdin reader hands the speaking loop.
+enum Inbound {
+    Speak(Speak),
+    Cancel(String),
+}
+
+/// Serve a speech engine on stdin/stdout.
+///
+/// Speech engines produce audio, so they implement no flow credit (see the
+/// module docs): the platform holds the window, and an engine that outruns
+/// playback blocks on the pipe.
+pub async fn serve_speech_engine<E: SpeechEngine>(cap: Capability, engine: &mut E) -> Result {
+    serve_speech_engine_on(
+        Box::new(tokio::io::stdin()),
+        Box::new(tokio::io::stdout()),
+        cap,
+        engine,
+    )
+    .await
+}
+
+/// [`serve_speech_engine`] over explicit transports, for tests.
+pub async fn serve_speech_engine_on<E: SpeechEngine>(
+    reader: BoxReadSend,
+    writer: BoxWrite,
+    cap: Capability,
+    engine: &mut E,
+) -> Result {
+    let mut writer = Writer::new(writer);
+    writer
+        .write_event(&Event::new(
+            event_type::CAPABILITY,
+            serde_json::to_value(&cap)?,
+        ))
+        .await?;
+    writer.flush().await?;
+
+    // The utterance being spoken, so a cancel for it reaches the engine
+    // while `speak` is still running rather than after it returns.
+    let current: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>> = Arc::new(Mutex::new(None));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+    spawn_speak_reader(reader, current.clone(), tx);
+
+    let mut queue: std::collections::VecDeque<Speak> = std::collections::VecDeque::new();
+    loop {
+        // Take everything that has arrived before choosing what to say next,
+        // so a cancel already sent for a queued utterance is honored before
+        // it starts.
+        loop {
+            match rx.try_recv() {
+                Ok(msg) => handle_inbound(msg, &mut queue, &mut writer).await?,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                // The platform is gone: nothing queued will be heard.
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+        let Some(req) = queue.pop_front() else {
+            match rx.recv().await {
+                Some(msg) => handle_inbound(msg, &mut queue, &mut writer).await?,
+                None => return Ok(()),
+            }
+            continue;
+        };
+
+        let session_id = req.session_id.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Ok(mut g) = current.lock() {
+            *g = Some((session_id.clone(), cancel.clone()));
+        }
+        let outcome = {
+            let mut ctx = SpeakCtx {
+                writer: &mut writer,
+                session_id: session_id.clone(),
+                cancel,
+                started: false,
+            };
+            engine.speak(req, &mut ctx).await
+        };
+        if let Ok(mut g) = current.lock() {
+            *g = None;
+        }
+        if let Err(e) = outcome {
+            let err = crate::events::ErrorEvent {
+                session_id: Some(session_id.clone()),
+                code: "speak_failed".into(),
+                message: e.to_string(),
+                fatal: false,
+            };
+            writer
+                .write_event(&Event::new(event_type::ERROR, serde_json::to_value(&err)?))
+                .await?;
+        }
+        write_audio_stop(&mut writer, &session_id).await?;
+    }
+}
+
+async fn handle_inbound(
+    msg: Inbound,
+    queue: &mut std::collections::VecDeque<Speak>,
+    writer: &mut Writer<BoxWrite>,
+) -> Result {
+    match msg {
+        Inbound::Speak(req) => queue.push_back(req),
+        Inbound::Cancel(session_id) => {
+            // Queued and not yet begun: close it now. A cancel for the
+            // utterance being spoken was already delivered through its flag,
+            // and one for an id no longer known is moot.
+            if let Some(i) = queue.iter().position(|r| r.session_id == session_id) {
+                queue.remove(i);
+                write_audio_stop(writer, &session_id).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn write_audio_stop(writer: &mut Writer<BoxWrite>, session_id: &str) -> Result {
+    let stop = AudioStop {
+        session_id: session_id.to_string(),
+        cutoff_ms: None,
+    };
+    writer
+        .write_event(&Event::new(
+            event_type::AUDIO_STOP,
+            serde_json::to_value(&stop)?,
+        ))
+        .await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Read `speak` requests and cancels from stdin. A cancel for the utterance
+/// being spoken trips its flag here, at once; everything is also forwarded to
+/// the speaking loop. Unknown and malformed events are ignored (wire leniency
+/// is contract). EOF or a read error cancels the utterance in progress and
+/// ends the stage: the platform is gone.
+fn spawn_speak_reader(
+    reader: BoxReadSend,
+    current: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
+    tx: tokio::sync::mpsc::UnboundedSender<Inbound>,
+) {
+    tokio::spawn(async move {
+        let mut reader = Reader::new(reader);
+        loop {
+            match reader.read_event().await {
+                Ok(Some(ev)) if ev.event_type == event_type::SPEAK => {
+                    match serde_json::from_value::<Speak>(ev.data) {
+                        Ok(req) => {
+                            if tx.send(Inbound::Speak(req)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => stage_log::warn(&format!("speak: undecodable request: {e}")),
+                    }
+                }
+                Ok(Some(ev)) if ev.event_type == event_type::AUDIO_STOP => {
+                    let Ok(stop) = serde_json::from_value::<AudioStop>(ev.data) else {
+                        continue;
+                    };
+                    if let Ok(g) = current.lock() {
+                        if let Some((id, flag)) = g.as_ref() {
+                            if *id == stop.session_id {
+                                flag.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    if tx.send(Inbound::Cancel(stop.session_id)).is_err() {
+                        break;
+                    }
+                }
+                Ok(Some(_)) => continue,
+                Ok(None) | Err(_) => break,
+            }
+        }
+        if let Ok(g) = current.lock() {
+            if let Some((_, flag)) = g.as_ref() {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+        // Dropping `tx` tells the speaking loop the platform is gone.
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,5 +1228,246 @@ mod tests {
         .await
         .expect("stopped_signal hung on an already-published stop")
         .unwrap();
+    }
+
+    // ---- speech engine ----
+
+    /// An engine that "speaks" one 4-byte chunk per word, yielding between
+    /// chunks so the reader task runs (a real engine awaits its synthesis).
+    /// A word "fail" makes the utterance fail after its first chunk.
+    #[derive(Default)]
+    struct WordEngine {
+        spoken: Vec<String>,
+    }
+
+    impl SpeechEngine for WordEngine {
+        async fn speak(&mut self, req: Speak, ctx: &mut SpeakCtx<'_>) -> Result {
+            self.spoken.push(req.session_id.clone());
+            ctx.start(AudioFormat::PCM_16K_MONO).await?;
+            for word in req.text.split_whitespace() {
+                if ctx.audio(&[0u8; 4]).await? == Flow::Stop {
+                    return Ok(());
+                }
+                if word == "fail" {
+                    return Err("engine broke".into());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            Ok(())
+        }
+    }
+
+    fn speak_event(session: &str, text: &str) -> Event {
+        Event::new(
+            event_type::SPEAK,
+            json!({ "session_id": session, "text": text }),
+        )
+    }
+
+    fn stop_event(session: &str) -> Event {
+        Event::new(event_type::AUDIO_STOP, json!({ "session_id": session }))
+    }
+
+    /// Serve `engine` with `inbound` written up front and then EOF after
+    /// `hold_open`, returning everything it wrote.
+    async fn run_engine(
+        engine: &mut WordEngine,
+        inbound: Vec<Event>,
+        hold_open: std::time::Duration,
+    ) -> Vec<Event> {
+        let (harness_w, stage_r) = duplex(1 << 16);
+        let (stage_w, harness_r) = duplex(1 << 16);
+        let mut w = Writer::new(harness_w);
+        for ev in &inbound {
+            w.write_event(ev).await.unwrap();
+        }
+        w.flush().await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(hold_open).await;
+            drop(w);
+        });
+        serve_speech_engine_on(Box::new(stage_r), Box::new(stage_w), cap("tts"), engine)
+            .await
+            .unwrap();
+        let mut r = Reader::new(harness_r);
+        let mut out = Vec::new();
+        while let Some(ev) = r.read_event().await.unwrap() {
+            out.push(ev);
+        }
+        out
+    }
+
+    fn for_session<'a>(out: &'a [Event], session: &str) -> Vec<&'a Event> {
+        out.iter()
+            .filter(|e| e.data["session_id"] == session)
+            .collect()
+    }
+
+    fn tags(evs: &[&Event]) -> Vec<String> {
+        evs.iter().map(|e| e.event_type.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn an_utterance_is_start_chunks_stop_on_its_session_and_never_credit() {
+        let mut e = WordEngine::default();
+        let out = run_engine(
+            &mut e,
+            vec![speak_event("u1", "snap left now")],
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(out[0].event_type, event_type::CAPABILITY);
+        assert_eq!(
+            tags(&for_session(&out, "u1")),
+            [
+                "audio_start",
+                "audio_chunk",
+                "audio_chunk",
+                "audio_chunk",
+                "audio_stop"
+            ]
+        );
+        assert!(
+            out.iter().all(|e| e.event_type != event_type::FLOW_CREDIT),
+            "a producer implements no credit"
+        );
+        let chunk = out
+            .iter()
+            .find(|e| e.event_type == event_type::AUDIO_CHUNK)
+            .unwrap();
+        assert_eq!(chunk.payload.len(), 4);
+        assert!(
+            chunk.data["timestamp_ms"].as_u64().unwrap() > 0,
+            "shared clock"
+        );
+    }
+
+    #[tokio::test]
+    async fn utterances_are_spoken_in_the_order_they_arrive() {
+        let mut e = WordEngine::default();
+        run_engine(
+            &mut e,
+            vec![speak_event("a", "one"), speak_event("b", "two")],
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(e.spoken, ["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_the_utterance_in_progress_and_closes_it_once() {
+        let (harness_w, stage_r) = duplex(1 << 16);
+        let (stage_w, harness_r) = duplex(1 << 16);
+        let words = vec!["word"; 200].join(" ");
+        // The platform's side runs on its own task; the engine in this one.
+        let harness = tokio::spawn(async move {
+            let mut w = Writer::new(harness_w);
+            let mut r = Reader::new(harness_r);
+            w.write_event(&speak_event("long", &words)).await.unwrap();
+            w.flush().await.unwrap();
+            // Wait for the first chunk: the utterance is under way.
+            loop {
+                let ev = r.read_event().await.unwrap().unwrap();
+                if ev.event_type == event_type::AUDIO_CHUNK {
+                    break;
+                }
+            }
+            w.write_event(&stop_event("long")).await.unwrap();
+            w.flush().await.unwrap();
+            let mut after = Vec::new();
+            loop {
+                let ev = r.read_event().await.unwrap().unwrap();
+                let done = ev.event_type == event_type::AUDIO_STOP;
+                after.push(ev.event_type);
+                if done {
+                    break;
+                }
+            }
+            drop(w);
+            // Nothing more for the session after its audio_stop.
+            let mut later = Vec::new();
+            while let Some(ev) = r.read_event().await.unwrap() {
+                later.push(ev);
+            }
+            (after, later)
+        });
+        let mut e = WordEngine::default();
+        serve_speech_engine_on(Box::new(stage_r), Box::new(stage_w), cap("tts"), &mut e)
+            .await
+            .unwrap();
+        let (after, later) = harness.await.unwrap();
+        assert!(
+            after.len() < 10,
+            "the engine stopped within a few chunks of the cancel, not after 200: {after:?}"
+        );
+        assert!(
+            later.iter().all(|ev| ev.data["session_id"] != "long"),
+            "no event after the close"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_queued_utterance_cancelled_before_it_begins_is_closed_unspoken() {
+        let mut e = WordEngine::default();
+        let out = run_engine(
+            &mut e,
+            vec![
+                speak_event("a", "one two three four"),
+                speak_event("b", "never"),
+                stop_event("b"),
+            ],
+            std::time::Duration::from_millis(300),
+        )
+        .await;
+        assert_eq!(e.spoken, ["a"], "b never reached the engine");
+        assert_eq!(tags(&for_session(&out, "b")), ["audio_stop"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_utterance_reports_an_error_closes_and_the_next_one_plays() {
+        let mut e = WordEngine::default();
+        let out = run_engine(
+            &mut e,
+            vec![speak_event("bad", "fail here"), speak_event("good", "fine")],
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(
+            tags(&for_session(&out, "bad")),
+            ["audio_start", "audio_chunk", "error", "audio_stop"]
+        );
+        let err = for_session(&out, "bad")[2];
+        assert_eq!(err.data["fatal"], false);
+        assert_eq!(
+            tags(&for_session(&out, "good")),
+            ["audio_start", "audio_chunk", "audio_stop"]
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_and_malformed_inbound_is_ignored() {
+        let mut e = WordEngine::default();
+        let out = run_engine(
+            &mut e,
+            vec![
+                Event::new("ext.acme.thing", json!({})),
+                Event::new(event_type::SPEAK, json!({ "no": "text" })),
+                speak_event("ok", "hello"),
+            ],
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(e.spoken, ["ok"]);
+        assert_eq!(
+            tags(&for_session(&out, "ok")),
+            ["audio_start", "audio_chunk", "audio_stop"]
+        );
+    }
+
+    #[test]
+    fn the_shared_clock_moves_forward() {
+        let a = shared_clock_ms();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(shared_clock_ms() >= a + 4);
     }
 }

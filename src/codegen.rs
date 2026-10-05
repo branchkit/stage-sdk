@@ -68,7 +68,7 @@ impl Tier {
                 "Transport vocabulary: the handshake, framing, error and flow-credit\n// types every stage speaks whatever its domain."
             }
             Tier::Audio => {
-                "The audio session vocabulary. Import this if your stage produces or\n// consumes an audio stream."
+                "The audio session vocabulary. Import this if your stage produces or\n// consumes an audio stream — a speech engine (`speak` in, audio out) and an\n// audio sink (audio in, `playback_*` out) included."
             }
             Tier::Recognition => {
                 "Recognition vocabulary: transcripts, the word union, and the\n// command-grammar DAG a recognizer decodes against. Import this only if\n// you are building a speech recognizer or an STT stage."
@@ -83,10 +83,10 @@ impl Tier {
 /// The tier a generated type belongs to.
 pub fn tier_of_type(name: &str) -> Tier {
     match name {
-        "WireHeader" | "Capability" | "StreamDecl" | "Delivery" | "ErrorEvent" | "FlowCredit" => {
-            Tier::Core
-        }
-        "AudioStart" | "AudioChunk" | "AudioStop" | "AudioFormat" => Tier::Audio,
+        "WireHeader" | "Capability" | "StreamDecl" | "Delivery" | "VoiceInfo" | "ErrorEvent"
+        | "FlowCredit" => Tier::Core,
+        "AudioStart" | "AudioChunk" | "AudioStop" | "AudioFormat" | "Speak" | "PlaybackStarted"
+        | "PlaybackEnded" => Tier::Audio,
         "Transcript" | "VocabularyUpdate" | "GrammarDagWire" | "WireArc" | "OpenState" => {
             Tier::Recognition
         }
@@ -98,7 +98,8 @@ pub fn tier_of_type(name: &str) -> Tier {
 pub fn tier_of_tag(tag: &str) -> Tier {
     match tag {
         "capability" | "error" | "flow_credit" => Tier::Core,
-        "audio_start" | "audio_chunk" | "audio_stop" => Tier::Audio,
+        "audio_start" | "audio_chunk" | "audio_stop" | "speak" | "playback_started"
+        | "playback_ended" => Tier::Audio,
         "transcript" | "vocabulary_update" => Tier::Recognition,
         _ => Tier::Monitors,
     }

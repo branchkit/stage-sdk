@@ -8,8 +8,10 @@
 //! (which re-exports them at the old paths for its internal callers):
 //!
 //! - [`stage`] — the runtime: [`stage::serve_audio_consumer`] for read-driven
-//!   stages, [`stage::serve_source`] for notifier-driven ones. The naming
-//!   asymmetry is the wire's, not the module's — see that module's docs.
+//!   stages, [`stage::serve_source`] for notifier-driven ones,
+//!   [`stage::serve_speech_engine`] for speech engines (text in, audio out).
+//!   The naming asymmetry is the wire's, not the module's — see that module's
+//!   docs.
 //! - [`wire`] — the framing: one JSON header line, optional binary payload.
 //! - [`events`] — the typed event vocabulary that serializes into
 //!   `Event::data` (audio, transcript, flow credit, device/location/display/
@@ -32,13 +34,15 @@
 //! constructors, so a field added in a later release breaks no stage:
 //! [`events::Capability`] ([`events::Capability::new`] and its setters),
 //! [`events::StreamDecl`] ([`events::StreamDecl::every`] /
-//! [`events::StreamDecl::latest`]) and [`stage::SourceOptions`]
+//! [`events::StreamDecl::latest`]), [`events::VoiceInfo`]
+//! ([`events::VoiceInfo::new`]) and [`stage::SourceOptions`]
 //! ([`stage::SourceOptions::new`]). These are where new platform features
 //! arrive, so they are closed now, once, rather than each time one does.
 //!
 //! The rest stay open to struct literals, deliberately:
 //!
-//! - The event payloads in [`events`] (`AudioStart`, `Transcript`, the device,
+//! - The event payloads in [`events`] (`AudioStart`, `Transcript`, `Speak`,
+//!   `PlaybackStarted`, the device,
 //!   location, display and power families) and the [`grammar_dag`] wire types
 //!   are the wire vocabulary itself, mirrored field for field in the published
 //!   pipeline contract and the Go, TypeScript and Python ports. A field is

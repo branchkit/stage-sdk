@@ -176,6 +176,26 @@ pub fn pipeline_schema_value() -> Value {
             false,
             "stage → host",
         );
+        // Speech output: a speech engine answers `speak` with the audio
+        // session vocabulary above, and an audio sink reports playback.
+        row(
+            t::SPEAK,
+            sub::<Speak>(&mut generator),
+            false,
+            "host → stage",
+        );
+        row(
+            t::PLAYBACK_STARTED,
+            sub::<PlaybackStarted>(&mut generator),
+            false,
+            "stage → host",
+        );
+        row(
+            t::PLAYBACK_ENDED,
+            sub::<PlaybackEnded>(&mut generator),
+            false,
+            "stage → host",
+        );
     }
 
     // A tag with no row regenerates contracts/pipeline.json byte-identical,
