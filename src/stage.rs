@@ -109,7 +109,15 @@ type BoxReadSend = Box<dyn AsyncRead + Unpin + Send>;
 ///     branchkit_stage_sdk::stage::run(run()).await
 /// }
 /// ```
+///
+/// On macOS it first points Apple's frameworks at the temporary directory the
+/// sandbox grants (`$TMPDIR`): they otherwise use the shared one, which a
+/// confined stage is refused, and some stop the process when that happens.
+/// It does this before `body` runs, so a model `body` loads is covered. A
+/// stage that does not use `run` gets the same from any `serve_*` entry, as
+/// long as no framework has written a temporary file before it.
 pub async fn run<F: Future<Output = Result>>(body: F) {
+    crate::sandbox_tmp::adopt();
     if let Err(e) = body.await {
         stage_log::error(&format!("fatal: {e}"));
         std::process::exit(1);
@@ -284,6 +292,7 @@ pub async fn serve_audio_consumer<C: AudioConsumer>(
     policy: CreditPolicy,
     handler: &mut C,
 ) -> Result {
+    crate::sandbox_tmp::adopt();
     serve_audio_consumer_on(
         Box::new(tokio::io::stdin()),
         Box::new(tokio::io::stdout()),
@@ -493,6 +502,7 @@ where
     F: FnOnce(SourceCtx) -> Fut,
     Fut: Future<Output = Result>,
 {
+    crate::sandbox_tmp::adopt();
     serve_source_on(Box::new(tokio::io::stdout()), cap, opts, body).await
 }
 
@@ -764,6 +774,7 @@ enum Inbound {
 /// module docs): the platform holds the window, and an engine that outruns
 /// playback blocks on the pipe.
 pub async fn serve_speech_engine<E: SpeechEngine>(cap: Capability, engine: &mut E) -> Result {
+    crate::sandbox_tmp::adopt();
     serve_speech_engine_on(
         Box::new(tokio::io::stdin()),
         Box::new(tokio::io::stdout()),
@@ -965,6 +976,7 @@ pub trait RequestHandler {
 /// `error` event, since there is no id to reply to; other event types are
 /// ignored, as wire leniency is contract.
 pub async fn serve_requests<H: RequestHandler>(cap: Capability, handler: &mut H) -> Result {
+    crate::sandbox_tmp::adopt();
     serve_requests_on(
         Box::new(tokio::io::stdin()),
         Box::new(tokio::io::stdout()),
