@@ -22,6 +22,7 @@
 /// `/private/var/folders/...` (`/var` is a link to `/private/var`). Resolving
 /// the link on disk is not an option, because a confined stage is refused
 /// the metadata reads that resolution needs.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn suffix_under(base: &str, own: &str) -> Option<String> {
     let norm = |p: &str| -> String {
         let p = p.trim_end_matches('/');
