@@ -99,7 +99,7 @@ impl<R: AsyncRead + Unpin> Reader<R> {
     }
 
     /// Maximum payload size we'll allocate (16 MB). Prevents a
-    /// misbehaving stage from OOM-ing the actuator with a bogus header.
+    /// misbehaving stage from OOM-ing the platform with a bogus header.
     const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
 
     /// Read the next event, or `Ok(None)` on clean EOF.

@@ -21,7 +21,7 @@ pub const START: StateId = 0;
 /// The engine-facing wire projection of the compiled grammar DAG (Phase D2
 /// contract).
 ///
-/// This is the JSON the actuator attaches to a `vocabulary_update` and the CTC
+/// This is the JSON the platform attaches to a `vocabulary_update` and the CTC
 /// stage feeds to the patched `GrammarBuilder` to build `G`. It is a *reduced*
 /// view of the DAG — exactly what FST construction needs, nothing the matcher
 /// keeps:

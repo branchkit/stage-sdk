@@ -1,6 +1,6 @@
 //! The stage-facing surface of the BranchKit pipeline runtime, MIT-licensed so
 //! pipeline stages can be authored out-of-tree without depending on the
-//! proprietary actuator crate.
+//! proprietary crate.
 //!
 //! [`stage`] is the entry point most stages want — it owns the handshake,
 //! credit, and leniency obligations that sit above framing. The rest is the
@@ -19,7 +19,7 @@
 //! - [`stage_log`] — the `BKLOG1` stderr line protocol the platform parses
 //!   into per-stage, per-session log records.
 //! - [`grammar_dag`] — the wire projection of the command-grammar DAG a
-//!   recognition stage decodes (the builder stays in the actuator).
+//!   recognition stage decodes (the builder stays in the platform).
 //! - [`credit`] — receiver-side flow-credit granting (the counter + emission
 //!   mechanism; window sizes stay per-stage policy).
 //!

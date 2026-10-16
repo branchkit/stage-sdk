@@ -830,9 +830,9 @@ pub struct ErrorEvent {
 /// The `vocabulary_update` payload: the recognition word union plus the
 /// optional grammar stamps the platform attaches at delivery time.
 ///
-/// This struct is the typed contract; the actuator's producer side still
+/// This struct is the typed contract; the platform's producer side still
 /// assembles the payload field-by-field (the three delivery-time grammar
-/// stamps mutate the JSON per event), and an actuator-side test pins that
+/// stamps mutate the JSON per event), and a platform-side test pins that
 /// assembly to this shape so the two cannot drift silently. A consumer
 /// stage should treat every field but `words` as optional and fall back
 /// to the flat word list when a stamp is absent or malformed.

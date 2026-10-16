@@ -2,7 +2,7 @@
 //! pipeline stage, replacing the per-stage `slog!` / `vlog!` / bare
 //! `eprintln!` divergence.
 //!
-//! Stages write on stderr; the actuator's stage stderr reader
+//! Stages write on stderr; the platform's stage stderr reader
 //! (`pipeline::stage`) parses the `BKLOG1` sentinel format into correlated
 //! `stage.diagnostic` bus events. Lines without the sentinel — native-library output, panics, a
 //! not-yet-migrated stage — still reach the bus via the reader's generic
@@ -22,7 +22,7 @@
 
 use std::sync::Mutex;
 
-/// Sentinel + version prefix every structured line begins with. The actuator
+/// Sentinel + version prefix every structured line begins with. The platform
 /// reader (`pipeline::stage`) splits on this; it is the single source of truth
 /// for the wire format `BKLOG1\t<level>\t<session_id>\t<message>`.
 pub const LINE_PREFIX: &str = "BKLOG1\t";
