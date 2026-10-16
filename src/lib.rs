@@ -4,7 +4,7 @@
 //!
 //! [`stage`] is the entry point most stages want — it owns the handshake,
 //! credit, and leniency obligations that sit above framing. The rest is the
-//! surface it is built from, extracted verbatim from `branch_actuator::pipeline`
+//! surface it is built from, extracted verbatim from `branchkit_core::pipeline`
 //! (which re-exports them at the old paths for its internal callers):
 //!
 //! - [`stage`] — the runtime: [`stage::serve_audio_consumer`] for read-driven

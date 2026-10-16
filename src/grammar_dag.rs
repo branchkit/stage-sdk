@@ -3,7 +3,7 @@
 //! Only the serde wire types live here — what a recognition stage *decodes*.
 //! The DAG builder (compilation from the command registry, eligibility
 //! scoping, `to_wire()`) is platform logic and stays in
-//! `branch_actuator::pipeline::grammar_dag`, which re-exports these types so
+//! `branchkit_core::pipeline::grammar_dag`, which re-exports these types so
 //! producer and consumer share one definition — no second copy to drift.
 //!
 //! A recognition stage DECODES these; the builder that produces them lives
