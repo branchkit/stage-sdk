@@ -245,7 +245,7 @@ pub fn pipeline_schema_value() -> Value {
     let definitions: Map<String, Value> = generator.take_definitions(false).into_iter().collect();
 
     let doc = json!({
-        "$id": "https://branchkit.dev/contracts/pipeline.json",
+        "$id": "https://branchkit.com/contracts/pipeline.json",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "description": "The BranchKit pipeline stage contract: newline-delimited JSON headers (WireHeader) with optional binary payloads, and the typed event vocabulary. GENERATED from the branchkit-stage-sdk crate by `emit-pipeline-schema` — the Rust types are the source of truth; edit them and run `just gen-stage-proto`. Drift is gated by `just check-stage-gen`.",
         "wire": {
