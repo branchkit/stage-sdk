@@ -17,7 +17,8 @@
 //!
 //! Rules:
 //! - Header is a single-line JSON object terminated by `\n`. No length
-//!   prefix on the JSON; readers are line-delimited.
+//!   prefix on the JSON; readers are line-delimited, and refuse a header
+//!   line over 16 MB, as they refuse a larger payload.
 //! - `type` is required. `data` carries event-specific JSON (omitted when
 //!   empty / null). `payload_length` is omitted when zero, otherwise gives
 //!   the exact byte count of the binary block following the newline.
@@ -102,6 +103,14 @@ impl<R: AsyncRead + Unpin> Reader<R> {
     /// misbehaving stage from OOM-ing the platform with a bogus header.
     const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
 
+    /// Maximum header line, the same 16 MB as the payload. The header is
+    /// read before the payload cap can apply, so without this a peer that
+    /// never sends a newline grows the line buffer until the process is
+    /// killed. It is as large as the payload's because the header carries
+    /// the event's whole `data`: a recognizer's vocabulary update (the word
+    /// union and its grammar graph) runs to hundreds of KB.
+    const MAX_HEADER: usize = Self::MAX_PAYLOAD;
+
     /// Read the next event, or `Ok(None)` on clean EOF.
     ///
     /// A clean EOF is end of stream with nothing read. End of stream with a
@@ -110,9 +119,18 @@ impl<R: AsyncRead + Unpin> Reader<R> {
     /// bytes happen to parse as a whole header.
     pub async fn read_event(&mut self) -> io::Result<Option<Event>> {
         self.line_buf.clear();
-        let n = self.inner.read_line(&mut self.line_buf).await?;
+        let n = (&mut self.inner)
+            .take(Self::MAX_HEADER as u64 + 1)
+            .read_line(&mut self.line_buf)
+            .await?;
         if n == 0 {
             return Ok(None);
+        }
+        if n > Self::MAX_HEADER {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "wire: header exceeds 16 MB cap",
+            ));
         }
         let Some(line) = self.line_buf.strip_suffix('\n') else {
             return Err(io::Error::new(
@@ -314,6 +332,34 @@ mod tests {
         drop(a);
         let err = reader.read_event().await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn a_header_past_the_cap_is_refused_without_reading_on() {
+        let mut bytes = vec![b'x'; Reader::<&[u8]>::MAX_HEADER + 4096];
+        bytes.push(b'\n');
+        let mut r = Reader::new(&bytes[..]);
+        let err = r.read_event().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(r.line_buf.len() <= Reader::<&[u8]>::MAX_HEADER + 1);
+    }
+
+    /// The header carries the event's whole `data`, so a large one (a
+    /// vocabulary update with its grammar graph) must still arrive.
+    #[tokio::test]
+    async fn a_large_header_under_the_cap_arrives() {
+        let (a, b) = duplex(1 << 20);
+        let words: Vec<String> = (0..60_000).map(|i| format!("word{i}")).collect();
+        let ev = Event::new("vocabulary_update", json!({ "words": words }));
+        let mut writer = Writer::new(a);
+        let mut reader = Reader::new(b);
+        let send = tokio::spawn(async move {
+            writer.write_event(&ev).await.unwrap();
+            writer.flush().await.unwrap();
+        });
+        let got = reader.read_event().await.unwrap().expect("event");
+        send.await.unwrap();
+        assert_eq!(got.data["words"].as_array().unwrap().len(), 60_000);
     }
 
     #[tokio::test]
