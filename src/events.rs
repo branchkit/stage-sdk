@@ -609,7 +609,9 @@ impl Capability {
     /// The stage runs for one session and then exits. A pipeline's first
     /// stage is started for each run, so it may declare only this; a later
     /// stage that declares it without [`Capability::persistent`] is refused
-    /// when the pipeline starts it.
+    /// when the pipeline starts it. A stage that declares both is run as
+    /// persistent after the first position, serving one session after
+    /// another.
     pub fn per_run(self) -> Self {
         self.lifecycle_mode("per_run")
     }
