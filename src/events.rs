@@ -593,18 +593,23 @@ impl Capability {
     }
 
     /// Add a lifecycle mode by name. [`Capability::persistent`] and
-    /// [`Capability::per_run`] name the two the platform runs today.
+    /// [`Capability::per_run`] name the two the platform knows.
     pub fn lifecycle_mode(mut self, mode: impl Into<String>) -> Self {
         self.lifecycle_modes.push(mode.into());
         self
     }
 
-    /// The stage runs for as long as its pipeline does.
+    /// The stage serves one session after another, for as long as the
+    /// platform keeps it running. A stage after a pipeline's first is kept
+    /// running from one run to the next, so it must declare this.
     pub fn persistent(self) -> Self {
         self.lifecycle_mode("persistent")
     }
 
-    /// The stage runs for one session and then exits.
+    /// The stage runs for one session and then exits. A pipeline's first
+    /// stage is started for each run, so it may declare only this; a later
+    /// stage that declares it without [`Capability::persistent`] is refused
+    /// when the pipeline starts it.
     pub fn per_run(self) -> Self {
         self.lifecycle_mode("per_run")
     }
